@@ -1,0 +1,37 @@
+[
+  {
+    "task": "pick_up_the_black_bowl_between_the_plate_and_the_ramekin_and_place_it_on_the_plate_demo",
+    "hit": true,
+    "dist_px": 0.3,
+    "area": 0.012,
+    "confidence": null
+  },
+  {
+    "task": "pick_up_the_black_bowl_from_table_center_and_place_it_on_the_plate_demo",
+    "hit": false,
+    "dist_px": 153.9,
+    "area": 0.0032,
+    "confidence": null
+  },
+  {
+    "task": "pick_up_the_black_bowl_in_the_top_drawer_of_the_wooden_cabinet_and_place_it_on_the_plate_demo",
+    "hit": false,
+    "dist_px": 4.0,
+    "area": 0.0064,
+    "confidence": null
+  },
+  {
+    "task": "pick_up_the_black_bowl_next_to_the_cookie_box_and_place_it_on_the_plate_demo",
+    "hit": false,
+    "dist_px": 186.5,
+    "area": 0.0072,
+    "confidence": null
+  },
+  {
+    "task": "pick_up_the_black_bowl_next_to_the_plate_and_place_it_on_the_plate_demo",
+    "hit": false,
+    "dist_px": 8.8,
+    "area": 0.0058,
+    "confidence": null
+  }
+]

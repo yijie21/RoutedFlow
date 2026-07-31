@@ -1,0 +1,266 @@
+{
+  "global": {
+    "n_tasks": 10,
+    "n_demos": 500,
+    "n_skipped": 0,
+    "lift_gap_m_median": 0.027109452257605207,
+    "lift_gap_robust_m_median": 0.024820479313903708,
+    "grasp_dist_m_max": 0.1336219757795334,
+    "replay_ee_maxdiff_m_max": 0.014871874640052019,
+    "n_no_motion": 0,
+    "n_nearest_vs_motion_mismatch": 8
+  },
+  "per_task": {
+    "pick_up_the_black_bowl_between_the_plate_and_the_ramekin_and_place_it_on_the_plate_demo": {
+      "n_demos": 50,
+      "skipped": [],
+      "t_g_median": 37.0,
+      "T_median": 95.0,
+      "grasp_dist_m": [
+        0.07590139284729958,
+        0.12197934836149216
+      ],
+      "lift_gap_m": [
+        0.049595848071619944,
+        0.12182170561460495
+      ],
+      "lift_gap_robust_m": [
+        0.022396808566950886,
+        0.11242360508625739
+      ],
+      "replay_ee_maxdiff_m": 0.01324844321520069,
+      "grasped_by_motion": [
+        "akita_black_bowl_1_main"
+      ],
+      "no_motion_demos": [],
+      "nearest_vs_motion_mismatch": [
+        "demo_30",
+        "demo_46"
+      ]
+    },
+    "pick_up_the_black_bowl_from_table_center_and_place_it_on_the_plate_demo": {
+      "n_demos": 50,
+      "skipped": [],
+      "t_g_median": 39.0,
+      "T_median": 117.0,
+      "grasp_dist_m": [
+        0.062160391360521317,
+        0.09934279322624207
+      ],
+      "lift_gap_m": [
+        0.025720788151461938,
+        0.07325363712879285
+      ],
+      "lift_gap_robust_m": [
+        0.020426438629585222,
+        0.0576047724471204
+      ],
+      "replay_ee_maxdiff_m": 0.014871874640052019,
+      "grasped_by_motion": [
+        "akita_black_bowl_1_main"
+      ],
+      "no_motion_demos": [],
+      "nearest_vs_motion_mismatch": []
+    },
+    "pick_up_the_black_bowl_in_the_top_drawer_of_the_wooden_cabinet_and_place_it_on_the_plate_demo": {
+      "n_demos": 50,
+      "skipped": [],
+      "t_g_median": 52.0,
+      "T_median": 148.5,
+      "grasp_dist_m": [
+        0.05851898901164532,
+        0.08532866835594177
+      ],
+      "lift_gap_m": [
+        0.013218094799461035,
+        0.08432477777107196
+      ],
+      "lift_gap_robust_m": [
+        0.013820205742881342,
+        0.04411215896242632
+      ],
+      "replay_ee_maxdiff_m": 0.013290450168827128,
+      "grasped_by_motion": [
+        "akita_black_bowl_1_main"
+      ],
+      "no_motion_demos": [],
+      "nearest_vs_motion_mismatch": []
+    },
+    "pick_up_the_black_bowl_next_to_the_cookie_box_and_place_it_on_the_plate_demo": {
+      "n_demos": 50,
+      "skipped": [],
+      "t_g_median": 49.0,
+      "T_median": 124.0,
+      "grasp_dist_m": [
+        0.051187703385949135,
+        0.11281296610832214
+      ],
+      "lift_gap_m": [
+        0.012744283893657563,
+        0.07199588668141248
+      ],
+      "lift_gap_robust_m": [
+        0.01835133997547636,
+        0.06415590416482196
+      ],
+      "replay_ee_maxdiff_m": 0.013927125783505412,
+      "grasped_by_motion": [
+        "akita_black_bowl_1_main"
+      ],
+      "no_motion_demos": [],
+      "nearest_vs_motion_mismatch": [
+        "demo_48"
+      ]
+    },
+    "pick_up_the_black_bowl_next_to_the_plate_and_place_it_on_the_plate_demo": {
+      "n_demos": 50,
+      "skipped": [],
+      "t_g_median": 51.0,
+      "T_median": 114.5,
+      "grasp_dist_m": [
+        0.056995244696736336,
+        0.0949014276266098
+      ],
+      "lift_gap_m": [
+        0.028498116363748473,
+        0.12076627985986925
+      ],
+      "lift_gap_robust_m": [
+        0.03393988744208637,
+        0.11380626543531959
+      ],
+      "replay_ee_maxdiff_m": 0.013443056689532051,
+      "grasped_by_motion": [
+        "akita_black_bowl_1_main"
+      ],
+      "no_motion_demos": [],
+      "nearest_vs_motion_mismatch": [
+        "demo_15",
+        "demo_17",
+        "demo_25",
+        "demo_26",
+        "demo_48"
+      ]
+    },
+    "pick_up_the_black_bowl_next_to_the_ramekin_and_place_it_on_the_plate_demo": {
+      "n_demos": 50,
+      "skipped": [],
+      "t_g_median": 52.5,
+      "T_median": 132.5,
+      "grasp_dist_m": [
+        0.05664923042058945,
+        0.08313632756471634
+      ],
+      "lift_gap_m": [
+        0.019425513652543816,
+        0.07837702933545507
+      ],
+      "lift_gap_robust_m": [
+        0.02724415006085653,
+        0.07210518719913651
+      ],
+      "replay_ee_maxdiff_m": 0.014818698134617891,
+      "grasped_by_motion": [
+        "akita_black_bowl_1_main"
+      ],
+      "no_motion_demos": [],
+      "nearest_vs_motion_mismatch": []
+    },
+    "pick_up_the_black_bowl_on_the_cookie_box_and_place_it_on_the_plate_demo": {
+      "n_demos": 50,
+      "skipped": [],
+      "t_g_median": 42.5,
+      "T_median": 99.0,
+      "grasp_dist_m": [
+        0.0574017483741045,
+        0.09378132969141006
+      ],
+      "lift_gap_m": [
+        0.020095969237383104,
+        0.08307215928680832
+      ],
+      "lift_gap_robust_m": [
+        0.02186041116876523,
+        0.07521803652329678
+      ],
+      "replay_ee_maxdiff_m": 0.012959942342042341,
+      "grasped_by_motion": [
+        "akita_black_bowl_1_main"
+      ],
+      "no_motion_demos": [],
+      "nearest_vs_motion_mismatch": []
+    },
+    "pick_up_the_black_bowl_on_the_ramekin_and_place_it_on_the_plate_demo": {
+      "n_demos": 50,
+      "skipped": [],
+      "t_g_median": 33.5,
+      "T_median": 115.0,
+      "grasp_dist_m": [
+        0.07695969194173813,
+        0.1336219757795334
+      ],
+      "lift_gap_m": [
+        0.11590893335240823,
+        0.21201357234305196
+      ],
+      "lift_gap_robust_m": [
+        0.049588878179173644,
+        0.1523631065133612
+      ],
+      "replay_ee_maxdiff_m": 0.01308745154708868,
+      "grasped_by_motion": [
+        "akita_black_bowl_1_main"
+      ],
+      "no_motion_demos": [],
+      "nearest_vs_motion_mismatch": []
+    },
+    "pick_up_the_black_bowl_on_the_stove_and_place_it_on_the_plate_demo": {
+      "n_demos": 50,
+      "skipped": [],
+      "t_g_median": 31.0,
+      "T_median": 137.5,
+      "grasp_dist_m": [
+        0.057142822071909904,
+        0.0948178619146347
+      ],
+      "lift_gap_m": [
+        0.03481739758626763,
+        0.10160434369144833
+      ],
+      "lift_gap_robust_m": [
+        0.04202595079304676,
+        0.0749165508038991
+      ],
+      "replay_ee_maxdiff_m": 0.012055443930297338,
+      "grasped_by_motion": [
+        "akita_black_bowl_1_main"
+      ],
+      "no_motion_demos": [],
+      "nearest_vs_motion_mismatch": []
+    },
+    "pick_up_the_black_bowl_on_the_wooden_cabinet_and_place_it_on_the_plate_demo": {
+      "n_demos": 50,
+      "skipped": [],
+      "t_g_median": 46.0,
+      "T_median": 136.0,
+      "grasp_dist_m": [
+        0.06051572225987911,
+        0.08858054876327515
+      ],
+      "lift_gap_m": [
+        0.039201476015582506,
+        0.08943086515452119
+      ],
+      "lift_gap_robust_m": [
+        0.03873591531992406,
+        0.07217273057132136
+      ],
+      "replay_ee_maxdiff_m": 0.014093609274651309,
+      "grasped_by_motion": [
+        "akita_black_bowl_1_main"
+      ],
+      "no_motion_demos": [],
+      "nearest_vs_motion_mismatch": []
+    }
+  }
+}

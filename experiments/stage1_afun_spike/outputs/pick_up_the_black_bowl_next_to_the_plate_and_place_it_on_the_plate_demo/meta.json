@@ -1,0 +1,15 @@
+{
+  "rgb": "/workspace/code/RoutedFlow/experiments/stage1_afun_spike/inputs/pick_up_the_black_bowl_next_to_the_plate_and_place_it_on_the_plate_demo/rgb.png",
+  "query": "pick up the black bowl next to the plate and place it on the plate",
+  "ckpt": "/workspace/code/RoutedFlow/third_party/AFUN/checkpoints/afun.pt",
+  "config": "inference",
+  "depth_source": "raw",
+  "depth_dir": "/workspace/code/RoutedFlow/experiments/stage1_afun_spike/inputs/pick_up_the_black_bowl_next_to_the_plate_and_place_it_on_the_plate_demo/depth",
+  "device": "cuda:0",
+  "timestamp": "2026-07-30T03:11:08",
+  "image_size": [
+    512,
+    512
+  ],
+  "out_dir": "/workspace/code/RoutedFlow/experiments/stage1_afun_spike/outputs/pick_up_the_black_bowl_next_to_the_plate_and_place_it_on_the_plate_demo"
+}

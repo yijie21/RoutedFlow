@@ -1,0 +1,8 @@
+{
+  "query": "pick up the black bowl from table center and place it on the plate",
+  "tg": 35,
+  "gt_pixel_rowcol": [
+    292.8550312427131,
+    281.05905224256895
+  ]
+}

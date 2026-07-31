@@ -1,0 +1,122 @@
+defaults:
+  - _self_
+
+# Set by run_stage0.py: experiment name = gate mode (none / object_only / robot_only / phase_switched)
+experiment: ???
+
+hydra:
+  run:
+    dir: /workspace/code/RoutedFlow/experiments/stage0_routing_causal_test/runs/${experiment}_seed${seed}
+  sweep:
+    dir: /workspace/code/RoutedFlow/experiments/stage0_routing_causal_test/runs/${experiment}_seed${seed}
+    subdir: ${hydra.job.num}
+
+train_gpus: [0]
+
+# Training — identical to third_party/ATM/conf/train_bc/libero_vilt.yaml unless noted
+lr: 5e-4
+# ATM's 128 was per-GPU on 4x A100; one 32G RTX 5090 OOMs at 128,
+# and 64 peaks within ~0.5G of the ceiling (died in epoch 1 once AdamW
+# states materialized). 32 x grad_accum 4 = effective 128, ample headroom.
+batch_size: 32
+grad_accum: 4
+num_workers: 8
+val_freq: 5
+save_freq: 10
+clip_grad: 100.
+epochs: 101
+seed: 0
+
+img_size: 128
+frame_stack: 10
+num_track_ts: 16
+num_track_ids: 32
+extra_state_keys: ["joint_states", "gripper_states"]
+
+aug_prob: 0.9
+
+train_dataset: ???
+val_dataset: ???
+val_num_demos: null
+
+# RoutedFlow: the single knob distinguishing the Stage-0 variants
+track_gate_cfg:
+  mode: ???
+
+optimizer_cfg:
+  type: optim.AdamW
+  params:
+    lr: ${lr}
+    weight_decay: 1e-4
+
+scheduler_cfg:
+  type: CosineAnnealingLR
+  params:
+    T_max: ${epochs}
+    eta_min: 0.
+    last_epoch: -1
+
+model_name: BCViLTPolicyGated
+model_cfg:
+  load_path: null
+  obs_cfg:
+    obs_shapes:
+      rgb: [3, 128, 128]
+      tracks: [16, 32, 2]
+    img_mean: [ 0., 0., 0. ]
+    img_std: [ 1.0, 1.0, 1.0 ]
+    num_views: 2
+    extra_states: ${extra_state_keys}
+    max_seq_len: ${frame_stack}
+  img_encoder_cfg:
+    network_name: PatchEncoder
+    patch_size: [8, 8]
+    embed_size: 128
+    no_patch_embed_bias: false
+  language_encoder_cfg:
+    network_name: MLPEncoder
+    input_size: 768
+    hidden_size: 128
+    num_layers: 1
+  extra_state_encoder_cfg:
+    extra_num_layers: 0
+    extra_hidden_size: 128
+  track_cfg:
+    track_fn: /workspace/code/RoutedFlow/third_party/ATM/results/track_transformer/libero_track_transformer_libero-spatial/
+    policy_track_patch_size: 16
+    use_zero_track: false
+  spatial_transformer_cfg:
+    num_layers: 7
+    num_heads: 8
+    head_output_size: 120
+    mlp_hidden_size: 256
+    dropout: 0.1
+    spatial_downsample: true
+    spatial_downsample_embed_size: 64
+    use_language_token: false
+  temporal_transformer_cfg:
+    num_layers: 4
+    num_heads: 6
+    head_output_size: 64
+    mlp_hidden_size: 256
+    dropout: 0.1
+    use_language_token: false
+  policy_head_cfg:
+    network_name: DeterministicHead
+    output_size: [7,]
+    hidden_size: 1024
+    num_layers: 2
+    loss_coef: 1.0
+    action_squash: false
+
+dataset_cfg:
+  img_size: ${img_size}
+  frame_stack: ${frame_stack}
+  num_track_ts: ${num_track_ts}
+  num_track_ids: ${num_track_ids}
+  track_obs_fs: 1
+  augment_track: false
+  extra_state_keys: ${extra_state_keys}
+  cache_all: true
+  cache_image: true
+  views: ["agentview", "eye_in_hand"]

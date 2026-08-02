@@ -1,0 +1,9 @@
+{
+    "typeCheckingMode": "basic",
+    "include": ["src", "tests", "run_stage0.py", "run_stage1.py", "run_stage2.py", "run_fig.py"],
+    "exclude": ["third_party", "data", "doc", "docs", "experiments", "**/__pycache__"],
+    "extraPaths": ["src", "third_party/ATM"],
+    "venvPath": "/workspace/miniconda3/envs",
+    "venv": "atm5090",
+    "reportMissingImports": "warning"
+}

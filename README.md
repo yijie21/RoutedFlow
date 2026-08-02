@@ -146,3 +146,74 @@ Phase-Gated Flow Routing 的实现代码库。按接触时刻 $t_g$（夹爪闭�
   `run_stage1.py extract|dino-feats|afun-prior`）、`third_party/`、checkpoint/h5、`runs*/`
 - 导出物入库：`doc/c_labels_viz.html`（标签可视化页源码）、`doc/research_docs/`（研究文档快照，
   canonical 在 `/workspace/research/d4rt/`，push 前手动刷新）
+
+### 2026-07-31（第二批）— 阶段〇重训中止，阶段一 5-fold 队列启动
+- 用户指示优先阶段一：夜链在变体 ii ep11 处 kill（变体 i 重训完成保留；iii/evals 未跑，重启说明
+  见 stage0 实验 README）；夜链曾在变体 i ep9 被外部占用饿死 14.4h（单次，未复发）
+- `stage1_chain.sh`：fold1–4 训练 + fold0 no-prior ablation + 6 个 run 的 A1/A2 评测（估 ~1.2h）
+
+### 2026-07-31（第三批）— fold0 逐 episode 可视化评测
+- 新增 `src/routedflow/stage1/eval_viz.py`（`run_stage1.py eval-viz --run <name>`）：val_id 40 集
+  × 5 文件（AFUN mask / C 预测投影 / 冻结 ATM 基座 flow + GT 参照 / 相位边框示教视频 / info.json）
+- 发现：w 推理误差 0.039 vs teacher-forced 0.003 → **feat-gather exposure gap 实测**；
+  on_the_wooden_cabinet 5/5 近失（14–27px）
+- 诚实标注：flow 图为无 conditioning 的冻结基座（L3 未训练）；视频为示教回放（无 policy）
+
+### 2026-07-31（第四批）— approach 分支全链（阶段二）实现 + 联合训练启动
+- grill 拍板：一步联合 warm start（L1=fold0 ckpt，L3=ATM track transformer，L4 从零）/
+  双视角图像+仅 agentview flow（wrist flow 置零）/ **FK 链点方案（D11）**：32 个运动链插值点，
+  身份跨帧固定，零噪声 GT + 查询深度免费 + 部署走 proprio+FK，robot mask 从 L3 输入退役 /
+  rollout 成功=闭合后脚本提起 5cm 且夹持宽度合理
+- 新增 `src/routedflow/stage2/`：`convert_light.py`（500 demos 无重放打包 → `data/atm_libero_light/`，
+  分钟级）、`chain_points.py`（chain_uv/chain_z 入 c_labels + QA overlay，**t=0 100% in-mask**）、
+  `flow_l3.py`（**D3 v1 = z 占 text 槽**；深度通道/QueryDepthEmbed 零初始化；ATM warm start）、
+  `joint_model.py`（ApproachPolicy 外部 flow 源 + JointApproachModel 三 loss，λ=0.5/1.0/0.1，
+  flow 加噪 0.01=D10）、`engine_train.py`、`eval_env2.py`（子环境 ChainStateWrapper：chain_uv/z/ee_z/
+  rgb512@reset）、`eval_rollout.py`（512 首帧现场 DINO→z，prior 置零；闭合锁存→脚本提起判定；
+  POLICY 水印视频）
+- 根目录 `run_stage2.py`：convert / chain-prep / test / smoke / train / eval / status
+- 单测 3/3；训练 smoke（三 loss 齐动）；rollout smoke 全通路 rc=0
+- **联合训练运行中**：13669 approach 窗口，29.7M 可训参数，~240s/epoch × 60 ≈ 4h
+- 坑 ×3：atm.model 先于 atm.policy.vilt import → 循环 import 坏缓存（flow_l3 顶部 order guard）；
+  vilt 的 train() 会调 self.track.eval()（del 不得，用 nn.Identity 占位）；eval 侧 obs 键名是
+  robot0_joint_pos/robot0_gripper_qpos（engine/utils.py 的 obs_key_mapping）
+
+### 2026-07-31（第五批）— 首次端到端 rollout：approach 分支 WORK
+- 三轮诊断链：① 包装器 512 渲染毁 128 视口（整集观测中心裁切）→ 环境原生 512；② gripper 通道
+  0 附近抖动 + 首次>0 即锁存 → ~26 步半空过早闭合（**D6 切换信号脆弱性的执行层实证**）→
+  连续 3 步 >0.5 鲁棒锁存；③ 训练在 ep24 被 RAM OOM 静默击杀（worker CoW 泄漏，已修
+  persistent_workers）——用 ep~20 的 ckpt_best 出的数
+- **结果（10 eps/任务，闭合后提起 5cm 判定）：train-8 = 0.2875**（next_to_plate/ramekin 0.5、
+  stove 0.4、on_cookie_box 0.0），**ood-2 = 0.10**；rollout 时 AFUN prior 置零
+- 已知增益杠杆（未做）：补完 60 epochs、λ_action 日程、latch 细化、ood 差距随 C-VLM held-out
+  弱项复合（stage-1 A1 ood 0.33）
+- 坑：后台命令 `; echo rc=$?` 会把任务退出码遮成 0——真实 rc 只在输出文件里
+
+### 2026-08-02（第三批）— retrofit 阶段3：top-2 逆向 spec + characterization test
+- 逆向 spec 落盘（只写实际行为，歧义单列）：`.scratch/retrofit-rollout-chain/spec.md`
+  （eval_rollout+eval_env2）、`.scratch/retrofit-label-extraction/spec.md`（extract/augment/chain/convert_light）
+- 一致性核查 5 项通过（text emb mean(0)、DINO 预处理逐行同、L3 单帧、chain_uv 约定、BCDataset forward 窗口）；
+  **抓到 1 个真 train/test 错位**：训练 flow ctx (b,10) 每历史槽配自己帧的 flow，rollout `pred[:,None]`
+  把当前 flow 广播进 10 槽——不崩、能出 0.29，但分布不一致（候选修复：rollout 维护 flow 队列；已有网，可安全改）
+- characterization test 7/7 绿：`tests/test_char_labels.py`（500 demos 全量清点零出视野/零 NaN +
+  demo_0 数值快照 + light 文件跨源 phase 相等 + in-mask ≥0.95 定向锚）、`tests/test_char_rollout.py`
+  （env obs 契约 + upright 亮度锚 + env/离线两条投影路径 chain_uv 统计 0.006 内互证 + 纯函数快照）；
+  `run_stage2.py char` / `char-env` 触发
+- 事实修正：chain_uv **非** [0,1]——实测 [-0.41, 0.78]，t=0 约半数链点在画面外（train/rollout 一致，非 bug）
+- eval_env2 docstring 假 `rgb512` 键删除（代码从未写入）；风险图第三名按方法论**不碰**
+
+### 2026-08-02（第二批）— retrofit 阶段2：静态护栏开通
+- 新增 `pyrightconfig.json`（basic 模式，venv=atm5090，extraPaths=src+third_party/ATM）、
+  `ruff.toml`（E4/E7/E9/F/PLE；third_party/data/doc/experiments 显式排除=无人看管区，勿静默扩大）
+- 工具：ruff 0.16.1（装进 atm5090）、pyright 1.1.411（npx，需 `PATH=$HOME/.nvm/.../bin`）
+- 分诊结果：**运行期错误四类清零**。ruff 运行期类 0 条（123 条全风格）；pyright 183 errors
+  基线全为 stub 噪声——h5py 联合类型 ~30、numpy overload ~138、PIL 常量 3（运行时存在）、
+  torch.hub object 2、`draw_star(d, *ndarray)` 变长解包 2、复合布尔守卫 narrowing 2
+- 复跑基线：`npx pyright` 应 ≈183 errors / `ruff check . --select E9,F63,F7,F82,F811,PLE` 应 0 条；
+  显著偏离即新引入问题
+
+### 2026-08-02 — agent skills 仓库配置（/setup-matt-pocock-skills）
+- 新增根目录 `CLAUDE.md`（Agent skills 配置段）+ `docs/agents/`：`issue-tracker.md`
+  （issue 用本地 markdown，`.scratch/<feature>/` 一目录一 feature，不用 GitHub Issues）、
+  `triage-labels.md`（默认五标签）、`domain.md`（single-context：根 `CONTEXT.md` + `docs/adr/`，惰性创建）
+- 注意：`docs/`（agent 约定文档）与既有 `doc/`（图/研究文档快照）并存，勿混用

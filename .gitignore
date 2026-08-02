@@ -16,3 +16,6 @@ third_party/
 *.h5
 experiments/*/runs/
 experiments/*/runs_invalid_maskbug/
+
+# regenerable eval visualizations (27M+, run_stage1.py eval-viz)
+experiments/*/eval_viz_*/

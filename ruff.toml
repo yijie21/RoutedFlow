@@ -1,0 +1,10 @@
+# Lint scope: src/tests/root scripts. third_party (vendored ATM) and outputs are
+# deliberately unwatched — known blind spot, do not "fix" by including them.
+target-version = "py310"
+line-length = 120
+extend-exclude = ["third_party", "data", "doc", "docs", "experiments"]
+
+[lint]
+# Default rules plus runtime-error classes used for retrofit triage:
+# F821 undefined name, F811 redefinition, E9 syntax/io, PLE errors
+select = ["E4", "E7", "E9", "F", "PLE"]

@@ -94,8 +94,9 @@ def cmd_status(args):
 
 def main():
     # pass-through subcommands: hand everything after the verb to the engine verbatim
-    if len(sys.argv) > 1 and sys.argv[1] in ("train-l1", "eval-l1"):
-        script = {"train-l1": "engine_train.py", "eval-l1": "eval_a1a2.py"}[sys.argv[1]]
+    if len(sys.argv) > 1 and sys.argv[1] in ("train-l1", "eval-l1", "eval-viz"):
+        script = {"train-l1": "engine_train.py", "eval-l1": "eval_a1a2.py",
+                  "eval-viz": "eval_viz.py"}[sys.argv[1]]
         raise SystemExit(sh([PY, os.path.join(S1, script)] + sys.argv[2:]))
 
     ap = argparse.ArgumentParser()

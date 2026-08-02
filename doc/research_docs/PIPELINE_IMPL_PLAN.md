@@ -30,6 +30,10 @@
 | 2026-07-30 | **阶段一训练 pipeline 数据流定稿**写入 §2.2（a 案）：3 个离线一次性作业（标签✅ / AFUN 推理 2–3h / DINO 特征分钟级）→ 预计算特征训练（秒级 epoch，~20M 可训参数）→ L_C 三项 loss → split 协议（8 任务训 / 2 整任务 held-out）+ A1 id/ood + A2 probe + channel-dropout ablation |
 | 2026-07-30 | **AFUN mask 错误处置**写入 §2.2：软特征非门控（无框死失效模式）/ 训练时错 mask=教 override 的解药 / **prior 正确率量化 QC（预注册，②作业后即测）**+ A1 按 prior 对错分层 / channel 可零成本摘除（dropout 保底 + ablation 决定去留） |
 | 2026-07-30 | **阶段一全部代码落地**（grill 会话拍板：范围=L1+L2 全量+L3/L5 骨架、L3 GT=扩展提取器、D8=a 定稿、GPU=先 AFUN 后重训；新开 D10=L4 吃 L3 预测+加噪）。离线作业②③完成（**AFUN 500 张实测 3 分钟**；prior 正确率 26%/58%，C′ 坐实）；link 位姿 17×500 补存；L1+L2 7.5M 参数 + 10 单测 + smoke 全链路通；5-fold/prior 分层/z_random 对照进 A1/A2 协议；L3/L5 骨架（注入块 identity-at-init）。fold0 正式训练启动 |
+| 2026-07-31 | **⛔ 阶段〇冻结（用户指示，永久生效直至另行通知）**：重训链在变体 ii ep11 中止，此后不再跑任何阶段〇实验（变体 i 修复标签后的 ckpt 保留；重启说明在 stage0 实验 README，仅当用户主动要求才碰）；§1.7 重验悬置。GPU 全部让给阶段一：5-fold + no-prior 队列运行中 |
+| 2026-07-31 | 5-fold 队列被用户中止（fold0 已完成保留）；fold0 逐 episode 可视化评测 40 集（AFUN mask / C 预测投影 / 冻结 ATM 基座 flow / 示教回放视频——后经用户质询把"示教回放"水印烧进每帧；w 推理误差 0.039 vs teacher-forced 0.003 = exposure gap 实测） |
+| 2026-07-31 | **approach 分支全链实现 + 联合训练启动**（用户指令 + grill 会话：一步联合 warm start / 双图像单 flow / FK 链点 / 提起验证；D3=z 占 text 槽定稿、D10 实现、新增 D11 FK 链点（mask 退役）、D12 视角配置）；详见 §3.6。发现并修复 atm 循环 import 陷阱 |
+| 2026-07-31 | **🎯 首次端到端 rollout 成立：train-8 approach-SR 0.2875 / ood-2 0.10**（三轮诊断：视口坑→过早闭合（D6 实证）→鲁棒锁存；训练 OOM 早停 ep24 用 ckpt_best）；详见 §3.6 |
 
 ---
 
@@ -452,10 +456,10 @@ action expert 保留 image tokens 是 ATM 原架构（B1/B2 对 SR 友好）；e
 
 ### 3.6 状态
 
-- ☐ IK/OSC baseline 实现（robosuite OSC_POSE 控制器，估 2–3 天）
-- ☐ ATM track transformer 的 conditioning 改造
-- ☐ mask 内查询点采样（复用阶段〇的标注代码）
-- ☐ 训练 + B1/B2 评测
+- ✅ 2026-07-31 **approach 分支全链实现并开训**（用户指示：全部写好后端到端联合训练；grill 拍板 4 项 + D3/D11/D12 定稿）。代码 `RoutedFlow/src/routedflow/stage2/`：轻量转换（500 demos 无重放打包，分钟级）、FK 链点预计算（QA 100% in-mask）、`L3RobotFlow`（z 占 text 槽 + 深度通道零初始化 + ATM warm start）、`ApproachPolicy`（外部 flow 源，wrist flow 置零）、`JointApproachModel`（L = 0.5·L_C + 1.0·L_flow + 0.1·L_action，全程可微，flow 加噪 0.01）、rollout 引擎（子环境 FK 链观测 + 512 首帧现场 DINO→z + 闭合锁存→脚本提起 5cm 验证；**rollout 时 AFUN prior 置零**，channel-dropout 训练兜底）。3/3 单测（z 梯度通路/深度零初始化等价/wrist 置零）+ 训练 smoke + rollout smoke 全通。**联合训练运行中**（13669 窗口，29.7M 可训，~240s/epoch × 60）
+- ✅ 2026-07-31 **首次端到端 rollout：train-8 approach-SR 0.2875 / ood-2 0.10**（10 eps/任务，闭合后提起 5cm 判定；ckpt=ep~20，训练被 RAM OOM 早停于 24/60——worker CoW 泄漏已修）。三轮诊断链：渲染视口坑（512 渲染毁 128 缓冲区）→ **过早闭合**（gripper 抖动 + 一触即发锁存，~26 步半空闭合——**D6 切换信号脆弱性的执行层实证**：阶段〇迟疑 vs 这里过早，同一信号源两种失败极性）→ 连续 3 步 >0.5 鲁棒锁存后 0 → 0.29。**判定：全可微 approach 链成立，进入迭代期**
+- ☐ 增益杠杆（下一轮）：补完 60 epochs / λ_action 调度 / latch 细化 / C-VLM ood 弱项（与 A1 ood 0.33 同源）
+- ☐ IK/OSC baseline（B2 对照）；坑已档：atm 循环 import（flow_l3 order guard）、离屏渲染尺寸必须=相机缓冲、`; echo rc=$?` 遮蔽任务退出码 |
 
 ---
 
@@ -543,13 +547,15 @@ $$E(t) = \underbrace{T(t)\,T(t_g)^{-1}}_{T_{rel}(t)\text{：flow SVD 直接给�
 |---|---|---|---|---|
 | D1 | 阶段一前端 | A. DINO+CLIP 从头 / B. 小 VLM+LoRA mask-token / C. 冻结 AFUN / **C′. 自训前端 + AFUN mask 输入通道** | **C′**（2026-07-30 spike 后修订：AFUN 空间指代 3/5，冻结单用上限 ~60% 不可接受；选对时 mask ≤9px 极准 → 降级为 prior 通道。spike 详情见 `RoutedFlow/experiments/stage1_afun_spike/README.md`） | ✅ 已定（待用户确认） |
 | D2 | C 的分布表示 | heatmap+bins / SE(3) bins / diffusion | heatmap+bins（a）；由两因子分解承载（§2.2） | 阶段一开训前 |
-| D3 | conditioning 注入方式 | cross-attention 加路 / AdaLN / concat | 未定 | 阶段二改造前 |
+| D3 | conditioning 注入方式 | cross-attention 加路 / AdaLN / concat / **z 占 text 槽位** | **✅ v1 = z 占 text 槽**（2026-07-31：最小手术且天然实现「任务信息只经 z」；零初始化 cross-attn 块留作对比 flag `--use-cross-attn`） | 已定 |
 | D4 | action 头 | ATM BC 头 / diffusion policy | ATM BC 头（v1） | 阶段二开训前 |
 | D5 | 闭环重规划频率 | 每步 / 每 K 步 | 未定 | 阶段三接入前 |
 | D6 | 阶段〇 phase 自指问题的处置 | 强制锁存诊断 / 训练时 phase 加噪 / 物理信号切换 / 接受负结果 | 未定（判定暂缓中，线索记录在 §1.7）；**联合训练下依然存在，见 §0.3** | 阶段四整合前必须回来处理 |
 | D7 | 训练策略 | 分块冻结 / **staged 预训 → end-to-end 联合微调 + auxiliary losses** | 后者（2026-07-30 定向，用户提出；配套因果诊断见 §0.3） | 阶段二开训前定 λ 权重 |
 | D8 | flow 表示 3D 化（§2.7 补全 #6 引出） | a. ATM 2D track + 查询点深度通道 / b. 真 3D flow predictor（General Flow 式） | **✅ a 定稿（2026-07-30 grill 会话用户拍板）**；`QueryDepthEmbed` 已实现（零初始化） | 已定 |
-| D10 | L4 的 flow 来源（②→③ 断层，grill 会话新开并当场定向） | a. GT flow teacher forcing（exposure bias）/ b. ③ 阶段 L4 吃 L3 预测（带梯度）+ flow 加噪增广 | **b**（用户默认同意 2026-07-30） | ③ 开训前复核 |
+| D10 | L4 的 flow 来源（②→③ 断层，grill 会话新开并当场定向） | a. GT flow teacher forcing（exposure bias）/ b. ③ 阶段 L4 吃 L3 预测（带梯度）+ flow 加噪增广 | **✅ b 已实现**（一步联合训练里天然成立；flow_noise=0.01） | 已定 |
+| D11 | L3 查询点方案（2026-07-31 grill：FK 链点替代 mask 采样） | a. robot mask 像素采样 / b. **FK 链点**（32 个运动链插值点，身份跨帧固定） | **✅ b**：零噪声 GT、免逐帧 depth/分割、查询深度免费（D8a 保留）、部署用 proprio+FK 合法获取；**robot mask 从 L3 输入退役**（QA：链点 t=0 100% 落 mask 内） | 已定 |
+| D12 | L4 视角配置 | 单视角 / **双视角图像+仅 agentview flow** / 双视角 flow | **✅ 双图像+单 flow**（grill 拍板；wrist flow 置零——wrist 相机位姿未存） | 已定（双 flow 留升级） |
 | D9 | L3/L5 flow 分支是否共享 backbone | 共享（省参数、D7 联合训练自然）/ 分开（归因干净） | 共享 | 阶段三开训前 |
 
 ## 7. 风险清单（top 5）

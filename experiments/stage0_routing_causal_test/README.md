@@ -66,3 +66,8 @@ train/eval 自洽但路由语义全错——上方结果表不可解释为 objec
 代码已修（`convert_libero_raw.py`、`eval_env.py`）、数据已离线修复（150 h5 翻回 + grid_labels 重算，
 IoU 复验 0.971/0.923）。重训排期待定（3×101 epochs ≈ 12.6h + n=400 eval）。
 详见 `PIPELINE_IMPL_PLAN.md` §1.7 追加块。
+
+**2026-07-31 重训链中止（用户指示：优先阶段一训练）**：变体 i 重训完成（101/101，ckpt 保留）；
+变体 ii 在 ep11 中止作废；变体 iii 与三个 eval 未跑。重启方式：`./night_chain_stage0_retrain.sh`
+（会跳过已完成的变体 i？——不会，engine 无 resume，重启前把 runs/robot_only_seed0 删掉即可，
+变体 i 的 runs/object_only_seed0 保留则重复训练，需手动把它从脚本循环里去掉）。

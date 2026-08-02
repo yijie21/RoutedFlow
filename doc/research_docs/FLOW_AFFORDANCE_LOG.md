@@ -862,3 +862,15 @@ zero-shot baseline + v2 scale-up 故事。详情 `RoutedFlow/experiments/stage1_
 - 代码：`stage1/` 七个模块 + `flow_models.py` 骨架 + 10 单测全过（轴约定数据锚定）。7.5M 参数，2s/epoch。
 - fold0 首轮（未调参，勿下结论）：A1 val_id spike 任务 0.8；val_ood 0.33（between 0.66 / **table_center 0.0**——空间指代之墙，fallback 阶梯的观察点）；A2 contact：z 18.3px < dino 21.4 < random 28.9（序正确），yaw 尚弱；train 0.009 vs val best 1.76 = 强过拟合（360 样本 vs 7.5M，正则/增广是下一杠杆）。奇观察：a1_prior_wrong > a1_prior_correct（分层样本少，待 5-fold 再看）。
 - 夜链启动：阶段〇修复标签重训 ×3 + n=400 eval ×3（旧作废 runs → `runs_invalid_maskbug/`）。
+
+## 2026-07-31 · approach 分支全链联合训练启动
+
+- 用户指令：写完整个 robot-flow 阶段（全可微）再端到端训练验证。grill 拍板 4 项；D3 定稿（z 占 text 槽）、D11 新增（FK 链点，mask 退役，QA 100% in-mask）、D12（双图像单 flow）。
+- 全链代码落地 + 三层 smoke（单测/训练/rollout）当日全通；联合训练（L1 warm + L3 warm + L4 scratch，三 loss 可微贯通）运行中，~4h 收。
+- 顺手发现的工程教训：atm 循环 import 陷阱、vilt train() 依赖 self.track、eval obs 键名映射。
+
+## 2026-07-31 · 首次端到端 rollout：approach 分支成立
+
+- **train-8 approach-SR 0.2875，ood-2 0.10**（joint ckpt ep~20，训练被 OOM 早停于 24/60）。全可微链路第一次驱动机器人完成 approach+抓取。
+- 三轮诊断：渲染视口坑 → 过早闭合（D6 脆弱性实证：阶段〇迟疑 vs 这里过早触发，同一信号源的两种失败极性，论文动机素材）→ 鲁棒锁存后从 0 → 0.29。
+- 下一轮杠杆：补完训练、λ_action 调度、latch 细化、C-VLM ood 弱项（与 stage-1 A1 ood 0.33 同源）。

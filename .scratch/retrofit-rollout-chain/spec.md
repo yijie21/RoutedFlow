@@ -56,7 +56,7 @@ Status: ready-for-human
 | L3 vid 帧数 | track_obs_fs=1（单帧） | `img_a[:,None]` 单帧 | ✅ |
 | chain_uv 约定 | 离线 (col/512,row/512) upright | wrapper 同式同序 | ✅ |
 | 窗口方向 | BCDataset forward `[off,off+t)` | 逐帧在线，无窗口错位 | ✅ |
-| **L4 flow ctx 时间维** | (b,**10**,tl,n,2)：历史槽各配**自己帧**的 flow | `pred[:,None]` = 当前 flow **广播**进 10 槽 | ⚠ §5-1 |
+| **L4 flow ctx 时间维** | (b,**10**,tl,n,2)：窗口各步配自己帧的 flow | `pred[:,None]`，act 的 t **恒为 1** | ✅ §5-1 复核 |
 
 ## 4. 已钉契约（characterization test 覆盖）
 
@@ -66,10 +66,14 @@ Status: ready-for-human
 
 ## 5. 看不懂 / 歧义 / 嫌疑（bug 高发区）
 
-1. **⚠ flow ctx 广播（真·train/test 错位）**：训练时 ViLT 的 10 个历史 obs 槽各自配对
-   "该帧算出的 flow"；rollout 时只算当前帧 flow，`[:, None]` 广播复制进全部 10 槽。
-   不崩（broadcast 合法）、能跑出 0.29，但历史槽的 flow 语义与训练分布不一致。
-   候选修复：rollout 维护 16 长度 flow 队列与 obs 队列同步。**修复须在 char test 落网之后。**
+1. **flow ctx 广播 —— 复核后撤销（假阳性，2026-08-02）**：最初判定 rollout 把当前 flow
+   广播进 10 个历史槽。运行时探针（probe_act）实测 `act()` 内 track_obs =
+   (b, v, **t=1**, fs=10, c, h, w)——upstream ViLT 的 act 把历史帧堆进 **fs 维**、t 恒为 1，
+   逐步时序语境由 latent_queue 承担；而 `track_encode` 按 **t 维**配 flow ⇒ `pred[:,None]`
+   (t=1) 与之严丝合缝，每个历史 latent 在它自己那步 act 时已配对过自己的 flow。
+   训练（t=10 窗口逐步配对）与 rollout（逐步 act + latent 队列）配对语义一致。**无需修复。**
+   教训：仅读 forward_loss 侧推断 act 侧张量布局不可靠——act 的队列 cat 在 dim=2（fs），
+   与直觉的 t 维堆叠相反；此类判断必须探针实证后才能立案。
 2. **文档-代码不一致**：`eval_env2` 模块 docstring 宣称 reset 时提供 `obs["rgb512"]`——代码从未写入
    （C-VLM 输入实际取自常规 obs 流）。误导后续维护者。
 3. **512→128 用 PIL 默认 bicubic**：训练视频是原生 128（LIBERO 原始 obs 直存），rollout 是 512 降采样

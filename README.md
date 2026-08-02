@@ -189,6 +189,14 @@ Phase-Gated Flow Routing 的实现代码库。按接触时刻 $t_g$（夹爪闭�
   弱项复合（stage-1 A1 ood 0.33）
 - 坑：后台命令 `; echo rc=$?` 会把任务退出码遮成 0——真实 rc 只在输出文件里
 
+### 2026-08-02（第四批）— flow 广播错位复核：**假阳性，撤销**
+- 动手修复前先跑运行时探针：`act()` 内 track_obs 实测 (b,v,**t=1**,fs=10,c,h,w)——upstream ViLT
+  把历史帧堆进 **fs 维**（queue cat 在 dim=2），t 恒为 1，时序语境走 latent_queue
+- `track_encode` 按 t 维配 flow ⇒ rollout 的 `pred[:,None]` (t=1) 严丝合缝，无广播；
+  每个历史 latent 在它那步 act 已配过自己的 flow，train/rollout 配对语义一致
+- **结论：无 bug、无需修复、rollout 无需重跑**（同 ckpt 会复现同一组数）；spec §5-1 已改记假阳性
+- 教训入档：只读训练侧代码推断 act 侧张量布局不可靠，此类 train/test 错位指控必须探针实证后立案
+
 ### 2026-08-02（第三批）— retrofit 阶段3：top-2 逆向 spec + characterization test
 - 逆向 spec 落盘（只写实际行为，歧义单列）：`.scratch/retrofit-rollout-chain/spec.md`
   （eval_rollout+eval_env2）、`.scratch/retrofit-label-extraction/spec.md`（extract/augment/chain/convert_light）

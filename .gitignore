@@ -19,3 +19,6 @@ experiments/*/runs_invalid_maskbug/
 
 # regenerable eval visualizations (27M+, run_stage1.py eval-viz)
 experiments/*/eval_viz_*/
+
+# wandb local run cache
+wandb/

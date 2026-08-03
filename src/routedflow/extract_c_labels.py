@@ -56,7 +56,7 @@ import numpy as np
 from natsort import natsorted
 
 from routedflow.convert_libero_raw import build_env, get_task_name_from_file_name, robot_geom_id_set
-from routedflow.phase import latched_phase
+from routedflow.phase import grasp_cycles, latched_phase
 
 RAW_ROOT = "/workspace/datasets/libero/hdf5"
 OUT_ROOT = os.path.join(REPO_ROOT, "data", "c_labels")
@@ -113,9 +113,14 @@ def extract_demo(sim, demo_grp, site_id, obj_bids, world_to_pix, K, extrinsic):
     T = actions.shape[0]
 
     phase = latched_phase(actions)
-    if not phase.any():
+    cycles = grasp_cycles(actions)
+    if not cycles:
         return None  # demo never closes the gripper — cannot define t_g
-    t_g = int(np.argmax(phase))
+    # t_g rule v2 (2026-08-02, user decision): LAST debounced closure — in fumble
+    # demos (~10% of spatial/object) the first closure is the failed grasp; the
+    # last one is the grasp that stuck. Single-cycle demos are unchanged.
+    # NOTE: `phase` stays first-closure latched (stage-0 legacy semantics).
+    t_g = int(cycles[-1][0])
 
     ee_pos = np.zeros((T, 3), np.float32)
     ee_quat = np.zeros((T, 4), np.float32)
@@ -153,7 +158,7 @@ def extract_demo(sim, demo_grp, site_id, obj_bids, world_to_pix, K, extrinsic):
     grasped_i = int(np.argmin(dists))
 
     return {
-        "t_g": t_g, "T": T, "grasped_i": grasped_i,
+        "t_g": t_g, "T": T, "n_cycles": len(cycles), "grasped_i": grasped_i,
         "grasp_dist_m": float(dists[grasped_i]),
         "lift_gap_m": lift_gap,
         "replay_ee_maxdiff_m": float(np.abs(ee_pos - obs_ee_pos).max()),
@@ -167,7 +172,7 @@ def extract_demo(sim, demo_grp, site_id, obj_bids, world_to_pix, K, extrinsic):
 
 def write_demo(task_f, key, d, obj_names):
     g = task_f.create_group(key)
-    for k in ("t_g", "T", "grasp_dist_m", "lift_gap_m", "replay_ee_maxdiff_m"):
+    for k in ("t_g", "T", "n_cycles", "grasp_dist_m", "lift_gap_m", "replay_ee_maxdiff_m"):
         g.attrs[k] = d[k]
     g.attrs["grasped_body"] = obj_names[d["grasped_i"]]
     g.create_dataset("rgb0", data=d["rgb0"], compression="gzip")

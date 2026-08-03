@@ -66,6 +66,18 @@ def test_l4_flow_ctx_gradient():
     assert flow.grad is not None and float(flow.grad.abs().sum()) > 0
     # wrist view slot must be zeros
     assert float(recon[:, 1].abs().sum()) == 0.0
+    # task_emb removed from the approach-branch interface (2026-08-03):
+    # act takes (obs, extra_states) only and runs on the zero-text plumbing
+    import inspect
+    assert "task_emb" not in inspect.signature(pol.act).parameters
+    assert "task_emb" not in inspect.signature(pol.forward_loss).parameters
+    pol.reset()
+    pol.set_flow(torch.rand(b, 1, tl, n, 2))
+    obs_np = np.random.randint(0, 255, (b, v, 128, 128, 3)).astype(np.uint8)
+    extra = {"joint_states": np.random.randn(b, 7).astype(np.float32),
+             "gripper_states": np.random.randn(b, 2).astype(np.float32)}
+    a, _ = pol.act(obs_np, extra)
+    assert a.shape == (b, 7)
 
 
 if __name__ == "__main__":

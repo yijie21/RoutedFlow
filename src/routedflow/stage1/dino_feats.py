@@ -45,6 +45,9 @@ def main():
         for tf in sorted(f for f in os.listdir(suite_dir) if f.endswith(".h5")):
             with h5py.File(os.path.join(suite_dir, tf), "r") as f:
                 demos = sorted(k for k in f.keys() if k.startswith("demo"))
+                if not demos:
+                    print(f"[{tf[:-3]}] no demos — skipped", flush=True)
+                    continue
                 imgs = np.stack([np.array(f[k]["rgb0"]) for k in demos])  # (N,512,512,3)
             x = torch.from_numpy(imgs).permute(0, 3, 1, 2).float() / 255.0
             x = torch.nn.functional.interpolate(x, size=INPUT_RES, mode="bilinear", align_corners=False)

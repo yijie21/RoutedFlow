@@ -22,6 +22,17 @@ AGENTVIEW = 0  # view order in the dataset: ["agentview", "eye_in_hand"]
 
 
 class ApproachPolicy(BCViLTPolicy):
+    """BCViLTPolicy with (a) an external flow source and (b) NO task_emb input.
+
+    task_emb removal (2026-08-03): the approach branch's task information enters
+    ONLY through z -> L3 -> flow (design §2.7 "z 是唯一任务通道"). task_emb was
+    verified a dead input anyway (use_language_token=false everywhere; measured
+    act-output diff exactly 0.0 under task_emb swap), so the interface drops it;
+    upstream plumbing still computes-and-discards text encodings, which we feed
+    with zeros. The real bypass to watch is SCENE LAYOUT in images — countered
+    at the data level (visually ambiguous task sets, e.g. libero_goal), not here.
+    """
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # External flow replaces the internal frozen track transformer. Keep a
@@ -32,6 +43,15 @@ class ApproachPolicy(BCViLTPolicy):
     def set_flow(self, flow_agentview):
         """flow_agentview: (b, t, tl, n, 2) — may carry gradient (D10)."""
         self._flow_ctx = flow_agentview
+
+    def forward_loss(self, obs, track_obs, track, extra_states, action):
+        dummy = torch.zeros(obs.shape[0], 768, device=obs.device, dtype=obs.dtype)
+        return super().forward_loss(obs, track_obs, track, dummy, extra_states, action)
+
+    def act(self, obs, extra_states):
+        import numpy as np
+        dummy = np.zeros((obs.shape[0], 768), dtype=np.float32)
+        return super().act(obs, dummy, extra_states)
 
     def track_encode(self, track_obs, task_emb):
         """External-flow version of BCViLTPolicy.track_encode (same tail as upstream)."""
@@ -66,7 +86,9 @@ class JointApproachModel(nn.Module):
         self.lam, self.flow_noise = lam, flow_noise
 
     def forward_loss(self, batch):
-        obs, track_obs, track, task_emb, actions, extra_states, \
+        # task_emb (batch[3]) is deliberately UNUSED: text reaches the approach
+        # branch only through L1's z (see ApproachPolicy docstring).
+        obs, track_obs, track, _task_emb, actions, extra_states, \
             chain_query, chain_depth, chain_gt, s1 = batch
         b, v, t = track_obs.shape[:3]
 
@@ -89,7 +111,7 @@ class JointApproachModel(nn.Module):
         if self.training and self.flow_noise > 0:
             flow = flow + torch.randn_like(flow) * self.flow_noise
         self.l4.set_flow(flow)
-        l_action, act_dict = self.l4.forward_loss(obs, track_obs, track, task_emb,
+        l_action, act_dict = self.l4.forward_loss(obs, track_obs, track,
                                                   extra_states, actions)
         self.l4._flow_ctx = None
 

@@ -34,6 +34,13 @@
 | 2026-07-31 | 5-fold 队列被用户中止（fold0 已完成保留）；fold0 逐 episode 可视化评测 40 集（AFUN mask / C 预测投影 / 冻结 ATM 基座 flow / 示教回放视频——后经用户质询把"示教回放"水印烧进每帧；w 推理误差 0.039 vs teacher-forced 0.003 = exposure gap 实测） |
 | 2026-07-31 | **approach 分支全链实现 + 联合训练启动**（用户指令 + grill 会话：一步联合 warm start / 双图像单 flow / FK 链点 / 提起验证；D3=z 占 text 槽定稿、D10 实现、新增 D11 FK 链点（mask 退役）、D12 视角配置）；详见 §3.6。发现并修复 atm 循环 import 陷阱 |
 | 2026-07-31 | **🎯 首次端到端 rollout 成立：train-8 approach-SR 0.2875 / ood-2 0.10**（三轮诊断：视口坑→过早闭合（D6 实证）→鲁棒锁存；训练 OOM 早停 ep24 用 ckpt_best）；详见 §3.6 |
+| 2026-08-02 | retrofit 三阶段过一遍 RoutedFlow：风险图（top-2=rollout 链/标签链）→ 静态护栏（pyright/ruff，运行期类零真 bug）→ top-2 逆向 spec + characterization test 7/7（"flow 广播错位"立案后经运行时探针**撤销为假阳性**——act() 布局 t=1/fs=10，教训：train/test 错位指控须探针实证）。仓库两次 push（6b0f2fa, 0dc0914） |
+| 2026-08-02 | wandb 接入（project=routedflow，fail-safe 默认开）+ 训练循环改 **step 制**（VLA 惯例；stage2 25k 步 ≈ 旧 60 ep）；engine 加 --resume（存 opt state）+ ckpt_last + val 流式读（容器 cgroup 上限 85 GiB，同机邻居实验两度 OOM 击杀训练） |
+| 2026-08-03 | **z 通道不承重实锤 + story 落档**：标定实验证明评测 harness 无罪；z 敏感度测量显示**所有**已训模型（含冠军）的 z 对 flow 影响仅 0.5-0.9%。初判旁路为 L4 task_emb【误，次日撤正见下行】。V/L/A 动静不匹配 story 写入 PHASE_GATED_FLOW_ROUTING.md §4.3 |
+| 2026-08-04 | **goal 混训判决**：行为层探针峰 0.15（5-7.5k，触冠军标定线；ood 首次方向性向好 0.15）但机制层**真实 z 分化仅 0.36%**——数据歧义方向对、D3 v1 单 token 注入太弱；收益=正则化非机制。工程：setsid 脱钩启动 + --stream-train 流式（邻居 54G 挤爆 cgroup 两杀训练）。候选下一轮：方案 A（z 直连 L4 语言槽）。实验总结 artifact（motivation/contribution/测量定义附录）发布 |
+| 2026-08-04 | **task_emb 论断撤正 + 接口摘除**：控制变量复测 task_emb 对策略输出影响 = **0.0**（use_language_token 自阶段〇起恒 false，文本从未进策略）；**真旁路 = 场景布局**（spatial 各任务摆放不同，分布内视觉即可识别任务，梯度不需要 z）。task_emb 从 ApproachPolicy 接口正式摘除（单测钉住）；断旁路唯一路径 = 数据层视觉歧义（libero_goal 同场景多目标混训，待拍板）。§4.3 已更新 |
+| 2026-08-03 | **扩数据 A1 ood 0.33→0.70**（1260 样本+增强+t_g v2；table_center 0→0.82）；闭环探针上线首战即抓 bug：t_g v2 使 6.8% approach 窗口含 fumble 闭合序列 → 探针全程贴地；修复=解耦（C 标签用末次闭合、窗口边界用首次闭合）；A/B（expand2）在跑 |
+| 2026-08-02 | **⚠ 25k 步重训判决：BC 越久闭环越差**——旧@8.5k 0.2875 / 新best@7k 0.1625 / 新final@25k **0.025**（ood 均 0.10）；val 一步 BC loss 全程平台 0.014-0.016 对此失明。冠军仍为旧 ckpt。下轮候选：训练中闭环探针做 rollout-based 选择 + 周期快照；详见 §3.6 |
 
 ---
 
@@ -458,8 +465,37 @@ action expert 保留 image tokens 是 ATM 原架构（B1/B2 对 SR 友好）；e
 
 - ✅ 2026-07-31 **approach 分支全链实现并开训**（用户指示：全部写好后端到端联合训练；grill 拍板 4 项 + D3/D11/D12 定稿）。代码 `RoutedFlow/src/routedflow/stage2/`：轻量转换（500 demos 无重放打包，分钟级）、FK 链点预计算（QA 100% in-mask）、`L3RobotFlow`（z 占 text 槽 + 深度通道零初始化 + ATM warm start）、`ApproachPolicy`（外部 flow 源，wrist flow 置零）、`JointApproachModel`（L = 0.5·L_C + 1.0·L_flow + 0.1·L_action，全程可微，flow 加噪 0.01）、rollout 引擎（子环境 FK 链观测 + 512 首帧现场 DINO→z + 闭合锁存→脚本提起 5cm 验证；**rollout 时 AFUN prior 置零**，channel-dropout 训练兜底）。3/3 单测（z 梯度通路/深度零初始化等价/wrist 置零）+ 训练 smoke + rollout smoke 全通。**联合训练运行中**（13669 窗口，29.7M 可训，~240s/epoch × 60）
 - ✅ 2026-07-31 **首次端到端 rollout：train-8 approach-SR 0.2875 / ood-2 0.10**（10 eps/任务，闭合后提起 5cm 判定；ckpt=ep~20，训练被 RAM OOM 早停于 24/60——worker CoW 泄漏已修）。三轮诊断链：渲染视口坑（512 渲染毁 128 缓冲区）→ **过早闭合**（gripper 抖动 + 一触即发锁存，~26 步半空闭合——**D6 切换信号脆弱性的执行层实证**：阶段〇迟疑 vs 这里过早，同一信号源两种失败极性）→ 连续 3 步 >0.5 鲁棒锁存后 0 → 0.29。**判定：全可微 approach 链成立，进入迭代期**
-- ☐ 增益杠杆（下一轮）：补完 60 epochs / λ_action 调度 / latch 细化 / C-VLM ood 弱项（与 A1 ood 0.33 同源）
-- ☐ IK/OSC baseline（B2 对照）；坑已档：atm 循环 import（flow_l3 order guard）、离屏渲染尺寸必须=相机缓冲、`; echo rc=$?` 遮蔽任务退出码 |
+- ⚠ 2026-08-02 **「补完训练」杠杆证伪：BC 越久闭环越差**。step 制重训 25k 步（≈旧 60 ep 等量；
+  wandb project=routedflow，中途被同机邻居实验 OOM 击杀一次、--resume 续毕），三点判决
+  （同协议 10 eps/任务，train-8）：旧 ckpt@~8.5k **0.2875** / 新 ckpt_best@7k **0.1625** /
+  新 ckpt_final@25k **0.025**（ood-2 均 0.10）。同 run 内 7k→25k 的崩塌是干净证据：BC 记忆
+  越锐利，闭环 covariate shift 越致命；**val 一步 BC loss 全程平台 0.014-0.016，完全失明**
+  ——train act 0.0018 时闭环反而近零。混杂已录：新 run 4k 处无 moments 续跑，旧@8.5k vs
+  新@7k 非纯步数对比，但趋势由同 run 内锚定。冠军仍为旧 ckpt（runs/joint_fold0_seed0）
+- 🔬 2026-08-02 **25k 步 run 的 loss 解剖（第一遍完整训练问题的最佳快照）**：
+
+  | step | train l_C | train flow | **val l_C** | val flow | val action |
+  |---|---|---|---|---|---|
+  | 500 | 0.738 | 0.00042 | 2.29 | 0.00036 | 0.0180 |
+  | 4000 | 0.017 | 0.00024 | 3.74 | 0.00033 | 0.0139 |
+  | 7000 | 0.009 | 0.00020 | 3.76 | 0.00024 | **0.0137**(best) |
+  | 25000 | 0.0006 | 0.00007 | **4.61** | 0.00018 | 0.0154 |
+
+  三条线三种命运：**flow 唯一健康**（train/val 双降——FK 链点近似确定性几何，低方差好泛化，
+  结构化设计的胜利）；**C 头是过拟合重灾区**（train 背到 0.0006，val 一路涨 2.29→4.61——
+  360 张训练图 vs 语言-空间 grounding 任务，数据严重失衡）；action val 浅 U 后平台。
+  因果链：C-VLM 过拟合 → 新场景 z 漂移出训练分布 → flow 被坏 z 牵引 → 闭环崩
+  （train-8：7k=0.1625 → 25k=0.025）。**不是三 loss 冲突**（冲突会体现为 train 上互相拖累，
+  实际 train 三线全降）——是辅助头数据失衡的过拟合毒化，文献同款：联合成功案例（GR-1/GR-2、
+  ECoT）辅助监督皆海量；val-loss 选 ckpt 失明则是 robomimic (2108.03298) 的著名实证
+- ☐ 增益杠杆（修订 v2，2026-08-02 用户评估后）：
+  ① 闭环探针 = **裁判非药**（用户判断正确：只是从差的里选不那么差的，不解决泛化）——但仍必装，
+  它是评判其余一切实验的基础设施；② λ_C 退火/冻 L1 + ③ C 头数据增强 = 对症；
+  ④ **根因是数据量，但失衡地小**：L3/L4 的 13669 窗口有 ATM 先例支撑（同量级数据成立 +
+  flow val 健康 + 旧 ckpt 0.2875 为证）；真正饿的是 C-VLM——360 张图学 language grounding。
+  可行的加数据路径：**扩 suite 提标签**（libero_goal/object/90 → C 监督 500→数千张，
+  提取器现成按 suite 复用）；增强是零成本版本；VLA 的答案（预训练 VLM 外包语义）是 v2 选项
+- ☐ IK/OSC baseline（B2 对照）；坑已档：atm 循环 import（flow_l3 order guard）、离屏渲染尺寸必须=相机缓冲、`; echo rc=$?` 遮蔽任务退出码、容器 cgroup 85 GiB 上限（free 显示宿主内存，别信） |
 
 ---
 

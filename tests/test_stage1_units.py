@@ -164,6 +164,23 @@ def test_flow_skeleton_injection_blocks():
         assert "MUST NOT see text" in str(e)
 
 
+def test_grasp_cycles_debounce_and_fumble():
+    from routedflow.phase import grasp_cycles
+
+    def acts(g):
+        return np.stack([np.zeros(len(g)), np.array(g, float)], 1)
+
+    assert grasp_cycles(acts([-1] * 5 + [1] * 10 + [-1] * 5)) == [(5, 15)]
+    # 2-frame close blip (dither) is ignored
+    assert grasp_cycles(acts([-1] * 5 + [1, 1] + [-1] * 5 + [1] * 10)) == [(12, 22)]
+    # 2-frame open dip inside a grasp is ignored
+    assert grasp_cycles(acts([-1] * 5 + [1] * 6 + [-1, -1] + [1] * 8)) == [(5, 21)]
+    # fumble: close-open-close -> two cycles; t_g rule v2 takes the LAST close
+    c = grasp_cycles(acts([-1] * 5 + [1] * 6 + [-1] * 6 + [1] * 10))
+    assert c == [(5, 11), (17, 27)]
+    assert grasp_cycles(acts([-1] * 10)) == []
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

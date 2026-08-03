@@ -34,6 +34,7 @@ from PIL import Image, ImageDraw
 
 from routedflow.stage1.dataset import fold_split
 from routedflow.stage2.joint_model import JointApproachModel
+from routedflow.wandb_util import WandbLogger
 
 EXP = os.path.join(REPO, "experiments", "stage2_approach_joint")
 STAGE0_CFG = os.path.join(EXP, "..", "stage0_routing_causal_test", "configs", "stage0_vilt.yaml")
@@ -80,6 +81,8 @@ def main():
     ap.add_argument("--rounds", type=int, default=2, help="episodes per task = vec * rounds")
     ap.add_argument("--n-video", type=int, default=3)
     ap.add_argument("--tasks-limit", type=int, default=None)
+    ap.add_argument("--out-tag", default="", help="suffix for output dir + wandb name (e.g. 'final')")
+    ap.add_argument("--no-wandb", action="store_true")
     args = ap.parse_args()
 
     dev = "cuda"
@@ -97,7 +100,8 @@ def main():
     from routedflow.convert_libero_raw import get_task_name_from_file_name
     from routedflow.stage2.eval_env2 import build_env_chain
 
-    out_root = os.path.join(EXP, f"rollout_{args.run}")
+    tag = f"_{args.out_tag}" if args.out_tag else ""
+    out_root = os.path.join(EXP, f"rollout_{args.run}{tag}")
     os.makedirs(out_root, exist_ok=True)
     tasks = sorted(os.listdir(os.path.join(REPO, "data", "atm_libero_light", "libero_spatial")))
     train_tasks, ood_tasks = fold_split(tasks, state["cfg"]["fold"])
@@ -111,9 +115,9 @@ def main():
         if text_emb.ndim > 1:
             text_emb = text_emb.mean(0)
         text_emb = text_emb[None]
-        env, task_emb = build_env_chain("libero_spatial", task.replace("_demo", ""),
-                                        img_size=512, gpu_id=0, vec_env_num=args.vec)
-        task_emb_np = np.asarray(task_emb, np.float32)[None].repeat(args.vec, 0)
+        env, _ = build_env_chain("libero_spatial", task.replace("_demo", ""),
+                                 img_size=512, gpu_id=0, vec_env_num=args.vec)
+        # NOTE: no task_emb to the policy — text enters only via compute_z (L1).
 
         succ, saved = [], 0
         tdir = os.path.join(out_root, short(task))
@@ -146,7 +150,7 @@ def main():
                     obs_v = np.stack([img_a, img_w], 1)  # (b, v, h, w, c)
                     extra = {"joint_states": obs["robot0_joint_pos"],
                              "gripper_states": obs["robot0_gripper_qpos"]}
-                    act, _ = model.l4.act(obs_v, task_emb_np, extra)
+                    act, _ = model.l4.act(obs_v, extra)
                     model.l4._flow_ctx = None
                 for i in range(B):
                     if mode[i] == 0:
@@ -201,6 +205,16 @@ def main():
                "z computed with AFUN prior zeroed (rollout); lift is scripted post-latch"},
               open(os.path.join(out_root, "summary.json"), "w"), indent=2)
     print("AGGREGATE:", json.dumps(agg), flush=True)
+
+    wb = WandbLogger(f"rollout_{args.run}{tag}", "rollout", enabled=not args.no_wandb,
+                     config=vars(args) | {"fold": state["cfg"]["fold"],
+                                          "ckpt_step": state.get("step", state.get("epoch"))})
+    wb.log({"sr/train8": agg["train8"], "sr/ood2": agg["ood2"]}
+           | {f"sr_task/{short(t)}": s["sr"] for t, s in summary.items()})
+    wb.log_table("per_task_sr", ["task", "split", "sr", "n"],
+                 [[short(t), s["split"], s["sr"], s["n"]] for t, s in summary.items()])
+    wb.summary(train8=agg["train8"], ood2=agg["ood2"])
+    wb.finish()
 
 
 if __name__ == "__main__":

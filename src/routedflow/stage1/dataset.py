@@ -21,7 +21,6 @@ grasps); site y-axis = finger-opening line.
 Split protocol (plan §2.2): fold k in 0..4 holds out tasks [2k, 2k+1] entirely
 (val_ood); remaining 8 tasks give train (demo 0..44) and val_id (demo 45..49).
 """
-import json
 import os
 
 import h5py
@@ -84,19 +83,48 @@ def fold_split(tasks, fold):
 
 
 class Stage1Dataset(Dataset):
-    """split: 'train' | 'val_id' | 'val_ood'. Fully in-memory (~1.1G for train)."""
+    """split: 'train' | 'val_id' | 'val_ood'. Fully in-memory (~1.1G for train).
 
-    def __init__(self, suite="libero_spatial", fold=0, split="train", use_prior=True):
+    Modes:
+      raw=False (default): samples carry cached DINO features — the original path,
+        also consumed by Stage2Dataset (do not change its sample keys).
+      raw=True: samples additionally carry rgb0 (512^2 uint8) + full-res prior
+        mask; __getitem__ applies augmentation (augment=True: contact-preserving
+        random resized crop + color jitter) and recomputes heatmap/prior-grid
+        after the transform. The engine computes DINO features online.
+      extra_suites: additional suites whose demos ALL go into the train split
+        (C-head 开小灶 2026-08-02 — semantic diversity for the C supervision only;
+        fold/ood semantics remain defined on the primary suite).
+    """
+
+    def __init__(self, suite="libero_spatial", fold=0, split="train", use_prior=True,
+                 extra_suites=None, raw=False, augment=False, seed=0):
         self.samples = []
+        self.raw, self.augment = raw, augment
+        self._rng = np.random.default_rng(seed)
         suite_dir = os.path.join(C_LABELS, suite)
         tasks = sorted(f[:-3] for f in os.listdir(suite_dir) if f.endswith(".h5"))
         train_tasks, ood_tasks = fold_split(tasks, fold)
         sel_tasks = ood_tasks if split == "val_ood" else train_tasks
 
         emb_map = np.load(BERT_CACHE, allow_pickle=True).item()
+        plan = [(suite, sel_tasks, split)]
+        if extra_suites and split == "train":
+            for s in extra_suites:
+                s_tasks = sorted(f[:-3] for f in os.listdir(os.path.join(C_LABELS, s))
+                                 if f.endswith(".h5"))
+                plan.append((s, s_tasks, "all"))
+        for cur_suite, cur_tasks, cur_split in plan:
+            self._load_suite(cur_suite, cur_tasks, cur_split, emb_map, use_prior)
+        self.train_tasks, self.ood_tasks = train_tasks, ood_tasks
+        assert self.samples, f"empty split {split} fold {fold}"
+
+    def _load_suite(self, suite, sel_tasks, split, emb_map, use_prior):
+        suite_dir = os.path.join(C_LABELS, suite)
         prior_path = os.path.join(CACHE, suite, "afun_prior.h5")
         prior = h5py.File(prior_path, "r") if (use_prior and os.path.exists(prior_path)) else None
-        dino = h5py.File(os.path.join(CACHE, suite, "dino_feats.h5"), "r")
+        dino_path = os.path.join(CACHE, suite, "dino_feats.h5")
+        dino = None if self.raw else h5py.File(dino_path, "r")
 
         for task in sel_tasks:
             with h5py.File(os.path.join(suite_dir, f"{task}.h5"), "r") as f:
@@ -117,38 +145,87 @@ class Stage1Dataset(Dataset):
                         np.array(g["ee_quat"])[int(g.attrs["t_g"])], base_quat)
                     gq = np.array(g["gripper_q"])[int(g.attrs["t_g"])]
                     has_prior = prior is not None and task in prior and k in prior[task]
-                    mask = (pool_mask_to_grid(np.array(prior[task][k])) if has_prior
-                            else np.zeros((GRID, GRID), np.float32))
-                    self.samples.append({
-                        "dino": np.asarray(dino[task][k]),          # (1369,768) f16
-                        "prior": mask.astype(np.float32),           # (37,37)
+                    s = {
                         "has_prior": np.float32(has_prior),
                         "text": emb,                                # (768,)
-                        "heatmap": gaussian_heatmap(row, col),      # (128,128)
                         "yaw_bin": np.int64(yb), "pitch_bin": np.int64(pb),
                         "w": np.float32(gq[0] - gq[1]),
                         "contact_rowcol": np.array([row, col], np.float32),  # @512
                         "task": task, "demo": k,
-                    })
-        dino.close()
+                    }
+                    if self.raw:
+                        s["rgb"] = np.array(g["rgb0"])              # (512,512,3) u8
+                        s["prior_full"] = (np.array(prior[task][k]) if has_prior
+                                           else np.zeros((512, 512), np.uint8))
+                    else:
+                        s["dino"] = np.asarray(dino[task][k])       # (1369,768) f16
+                        mask = (pool_mask_to_grid(np.array(prior[task][k])) if has_prior
+                                else np.zeros((GRID, GRID), np.float32))
+                        s["prior"] = mask.astype(np.float32)        # (37,37)
+                        s["heatmap"] = gaussian_heatmap(row, col)   # (128,128)
+                    self.samples.append(s)
+        if dino is not None:
+            dino.close()
         if prior is not None:
             prior.close()
-        self.train_tasks, self.ood_tasks = train_tasks, ood_tasks
-        assert self.samples, f"empty split {split} fold {fold}"
 
     def __len__(self):
         return len(self.samples)
 
+    def _augment_geo(self, rgb, prior, row, col):
+        """Contact-preserving random resized crop (no flip/rotation: spatial
+        language and base-frame orientation targets must stay valid)."""
+        rng = self._rng
+        r0 = c0 = 0
+        size = 512
+        for _ in range(10):
+            s = int(512 * rng.uniform(0.7, 1.0))
+            rr = int(rng.integers(0, 512 - s + 1))
+            cc = int(rng.integers(0, 512 - s + 1))
+            if rr + 16 <= row < rr + s - 16 and cc + 16 <= col < cc + s - 16:
+                r0, c0, size = rr, cc, s
+                break
+        rgb = rgb[r0:r0 + size, c0:c0 + size]
+        prior = prior[r0:r0 + size, c0:c0 + size]
+        sc = 512.0 / size
+        return rgb, prior, (row - r0) * sc, (col - c0) * sc
+
     def __getitem__(self, i):
         s = self.samples[i]
-        return {
-            "dino": torch.from_numpy(np.asarray(s["dino"], np.float32)),
-            "prior": torch.from_numpy(s["prior"]),
+        common = {
             "has_prior": torch.tensor(s["has_prior"]),
             "text": torch.from_numpy(s["text"]),
-            "heatmap": torch.from_numpy(s["heatmap"]),
             "yaw_bin": torch.tensor(s["yaw_bin"]),
             "pitch_bin": torch.tensor(s["pitch_bin"]),
             "w": torch.tensor(s["w"]),
-            "contact_rowcol": torch.from_numpy(s["contact_rowcol"]),
+        }
+        if not self.raw:
+            return common | {
+                "dino": torch.from_numpy(np.asarray(s["dino"], np.float32)),
+                "prior": torch.from_numpy(s["prior"]),
+                "heatmap": torch.from_numpy(s["heatmap"]),
+                "contact_rowcol": torch.from_numpy(s["contact_rowcol"]),
+            }
+        rgb, prior_m = s["rgb"], s["prior_full"]
+        row, col = float(s["contact_rowcol"][0]), float(s["contact_rowcol"][1])
+        if self.augment:
+            rgb, prior_m, row, col = self._augment_geo(rgb, prior_m, row, col)
+        x = torch.from_numpy(np.ascontiguousarray(rgb)).permute(2, 0, 1).float() / 255.0
+        pm = torch.from_numpy(np.ascontiguousarray(prior_m)).float()[None, None]
+        if x.shape[-1] != 512:
+            x = torch.nn.functional.interpolate(x[None], size=512, mode="bilinear",
+                                                align_corners=False)[0]
+            pm = torch.nn.functional.interpolate(pm, size=512, mode="area")
+        if self.augment:
+            b, c_, sat = [float(v) for v in self._rng.uniform(0.8, 1.2, 3)]
+            x = (x * b).clamp(0, 1)
+            x = ((x - x.mean()) * c_ + x.mean()).clamp(0, 1)
+            grey = x.mean(0, keepdim=True)
+            x = (grey + (x - grey) * sat).clamp(0, 1)
+        prior_grid = torch.nn.functional.interpolate(pm, size=GRID, mode="area")[0, 0]
+        return common | {
+            "rgb": x,                                                    # (3,512,512) 0-1
+            "prior": prior_grid,
+            "heatmap": torch.from_numpy(gaussian_heatmap(row, col)),
+            "contact_rowcol": torch.tensor([row, col], dtype=torch.float32),
         }

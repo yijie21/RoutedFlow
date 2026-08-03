@@ -48,7 +48,8 @@ def main():
         "char-env": [PY, os.path.join(REPO, "tests", "test_char_rollout.py")],
         "train": [PY, os.path.join(S2, "engine_train.py")],
         "smoke": [PY, os.path.join(S2, "engine_train.py"), "--name", "smoke",
-                  "--epochs", "1", "--bs", "4", "--accum", "2"],
+                  "--steps", "8", "--log-every", "4", "--val-every", "8",
+                  "--bs", "4", "--accum", "2", "--no-wandb"],
         "eval": [PY, os.path.join(S2, "eval_rollout.py")],
     }
     if cmd == "status":
@@ -56,7 +57,7 @@ def main():
         for r in sorted(os.listdir(runs)) if os.path.isdir(runs) else []:
             m = os.path.join(runs, r, "metrics.jsonl")
             n = sum(1 for _ in open(m)) if os.path.exists(m) else 0
-            print(f"{r}: {n} epochs logged")
+            print(f"{r}: {n} metric rows logged")
         raise SystemExit(0)
     if cmd not in table:
         print(__doc__)

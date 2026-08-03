@@ -22,26 +22,50 @@ from atm.dataloader.bc_dataloader import BCDataset
 from routedflow.stage1.dataset import Stage1Dataset, fold_split
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-C_LABELS = os.path.join(REPO, "data", "c_labels", "libero_spatial")
-LIGHT = os.path.join(REPO, "data", "atm_libero_light", "libero_spatial")
+C_ROOT = os.path.join(REPO, "data", "c_labels")
+LIGHT_ROOT = os.path.join(REPO, "data", "atm_libero_light")
+PRIMARY = "libero_spatial"
 
 
-def light_dirs(fold, split):
-    tasks = sorted(d for d in os.listdir(LIGHT))
+def _has_demos(suite, task):
+    import h5py
+    p = os.path.join(C_ROOT, suite, f"{task}.h5")
+    if not os.path.exists(p):
+        return False
+    with h5py.File(p, "r") as f:
+        return any(k.startswith("demo") for k in f.keys())
+
+
+def light_dirs(fold, split, extra_suites=()):
+    """Primary-suite dirs per fold/split; extra suites (train only) add ALL their
+    grasp-bearing tasks — the visual-ambiguity lever (e.g. libero_goal shares ONE
+    scene across 10 goals, so only language/z can disambiguate)."""
+    tasks = sorted(d for d in os.listdir(os.path.join(LIGHT_ROOT, PRIMARY)))
     train_tasks, ood = fold_split(tasks, fold)
     sel = ood if split == "val_ood" else train_tasks
-    return [os.path.join(LIGHT, t, "all") for t in sel]
+    dirs = [os.path.join(LIGHT_ROOT, PRIMARY, t, "all") for t in sel]
+    if split == "train":
+        for s in extra_suites:
+            for t in sorted(os.listdir(os.path.join(LIGHT_ROOT, s))):
+                if os.path.isdir(os.path.join(LIGHT_ROOT, s, t, "all")) and _has_demos(s, t):
+                    dirs.append(os.path.join(LIGHT_ROOT, s, t, "all"))
+    return dirs
 
 
 class Stage2Dataset(BCDataset):
-    def __init__(self, *args, fold=0, split="train", tg_margin=2, use_prior=True, **kwargs):
+    def __init__(self, *args, fold=0, split="train", tg_margin=2, use_prior=True,
+                 extra_suites=(), **kwargs):
         self.fold, self.split, self.tg_margin = fold, split, tg_margin
         kwargs.setdefault("views", ["agentview", "eye_in_hand"])
-        super().__init__(*args, dataset_dir=light_dirs(fold, split), **kwargs)
-        assert self.cache_all, "Stage2Dataset requires cache_all=True"
+        super().__init__(*args, dataset_dir=light_dirs(fold, split, extra_suites), **kwargs)
+        # cache_all=False is fine: BCDataset builds its index maps regardless and
+        # streams per item — used for val to avoid a duplicate ~8G demo cache
+        # (train + val_id read the SAME 8 task dirs; only the window filter differs).
 
-        # stage-1 samples keyed by (task, demo) — same fold/split semantics
-        s1 = Stage1Dataset(fold=fold, split=split, use_prior=use_prior)
+        # stage-1 samples keyed by (task, demo) — same fold/split semantics;
+        # extra suites join s1 the same way (its extra_suites path = train only)
+        s1 = Stage1Dataset(fold=fold, split=split, use_prior=use_prior,
+                           extra_suites=list(extra_suites) or None)
         self._s1 = {(s["task"], s["demo"]): s for s in s1.samples}
 
         # chain data + t_g per demo_id; then build the filtered index:
@@ -51,14 +75,22 @@ class Stage2Dataset(BCDataset):
         allowed = {(t, d) for (t, d) in self._s1.keys()}
         for demo_id, path in self._demo_id_to_path.items():
             task = os.path.basename(os.path.dirname(os.path.dirname(path)))
+            suite = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(path))))
             demo = os.path.basename(path).replace(".hdf5", "")
             if (task, demo) not in allowed:
                 continue
-            with h5py.File(os.path.join(C_LABELS, f"{task}.h5"), "r") as f:
+            with h5py.File(os.path.join(C_ROOT, suite, f"{task}.h5"), "r") as f:
                 g = f[demo]
                 uv = np.asarray(g["chain_uv"], np.float32)
                 zz = np.asarray(g["chain_z"], np.float32)
-                tg = int(g.attrs["t_g"])
+                # Window bound = FIRST closure (phase latch), NOT attrs t_g (= last
+                # closure since t_g rule v2). Decoupling matters: with the v2 bound,
+                # fumble demos contributed windows containing close-fail-reopen
+                # sequences — 6.8% of windows taught mid-approach closing, which the
+                # rollout latch punishes with an instant wrong-place lift (measured
+                # collapse to probe SR ~0.05, 2026-08-03).
+                ph = np.asarray(g["phase"])
+                tg = int(np.argmax(ph)) if ph.any() else int(g.attrs["t_g"])
             pad = self.frame_stack + self.num_track_ts
             uv = np.concatenate([uv, np.repeat(uv[-1:], pad, 0)])
             zz = np.concatenate([zz, np.repeat(zz[-1:], pad, 0)])

@@ -74,6 +74,8 @@ def process_task(path):
         w2p = np.array(f["world_to_pix"])
         ext_inv = np.linalg.inv(np.array(f["extrinsic"]))
         demos = sorted(k for k in f.keys() if k.startswith("demo"))
+        if not demos:
+            return None, 0   # all demos skipped at extraction (e.g. no-grasp goal tasks)
         n_new = 0
         for k in demos:
             g = f[k]
@@ -126,6 +128,10 @@ def main(suite="libero_spatial"):
     for tf in sorted(f for f in os.listdir(suite_dir) if f.endswith(".h5")):
         path = os.path.join(suite_dir, tf)
         demo0, n_new = process_task(path)
+        if demo0 is None:
+            print(f"[{tf[:-3][:40]}] no demos (all skipped at extraction) — chain skipped",
+                  flush=True)
+            continue
         frac = qa(path, demo0)
         fracs.append(frac)
         print(f"[{tf[:-3][:40]}] +{n_new} demos, t0 in-mask {frac:.0%}", flush=True)

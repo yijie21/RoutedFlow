@@ -1,0 +1,341 @@
+<title>RoutedFlow 实验总结 · Phase-Gated Flow Routing</title>
+<style>
+  :root {
+    --surface: #fcfcfb; --card: #f4f3f0; --line: #e2e0da;
+    --ink: #0b0b0b; --ink-2: #52514e; --ink-3: #8a897f;
+    --accent: #2a78d6; --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
+    --good: #008300; --bad: #e34948; --warnbg: #fdf3e7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #1a1a19; --card: #242422; --line: #3a3936;
+      --ink: #ffffff; --ink-2: #c3c2b7; --ink-3: #8a897f;
+      --accent: #3987e5; --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+      --good: #35a835; --bad: #e66767; --warnbg: #2e2620;
+    }
+  }
+  :root[data-theme="dark"] {
+    --surface: #1a1a19; --card: #242422; --line: #3a3936;
+    --ink: #ffffff; --ink-2: #c3c2b7; --ink-3: #8a897f;
+    --accent: #3987e5; --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+    --good: #35a835; --bad: #e66767; --warnbg: #2e2620;
+  }
+  :root[data-theme="light"] {
+    --surface: #fcfcfb; --card: #f4f3f0; --line: #e2e0da;
+    --ink: #0b0b0b; --ink-2: #52514e; --ink-3: #8a897f;
+    --accent: #2a78d6; --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
+    --good: #008300; --bad: #e34948; --warnbg: #fdf3e7;
+  }
+  html { background: var(--surface); }
+  body {
+    background: var(--surface); color: var(--ink);
+    font-family: -apple-system, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+    line-height: 1.75; margin: 0; padding: 0 20px 80px;
+  }
+  main { max-width: 880px; margin: 0 auto; }
+  h1, h2, h3 { font-family: "Songti SC", "Noto Serif CJK SC", "SimSun", serif; text-wrap: balance; }
+  h1 { font-size: 2rem; margin: 48px 0 4px; }
+  h2 { font-size: 1.35rem; margin: 56px 0 12px; border-bottom: 2px solid var(--line); padding-bottom: 8px; }
+  h3 { font-size: 1.05rem; margin: 28px 0 8px; }
+  .sub { color: var(--ink-2); margin: 0 0 28px; }
+  .num { font-variant-numeric: tabular-nums; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+  th, td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: left; }
+  th { color: var(--ink-2); font-weight: 600; }
+  td.num, th.num { text-align: right; }
+  .wrap { overflow-x: auto; }
+  .tiles { display: flex; gap: 14px; flex-wrap: wrap; margin: 26px 0; }
+  .tile { flex: 1 1 180px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+  .tile .v { font-size: 1.7rem; font-weight: 700; }
+  .tile .k { color: var(--ink-2); font-size: .85rem; }
+  .tile .d { color: var(--ink-3); font-size: .78rem; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px 24px; margin: 18px 0; }
+  .tag { display: inline-block; font-size: .72rem; padding: 1px 9px; border-radius: 99px; border: 1px solid var(--line); color: var(--ink-2); margin-right: 6px; vertical-align: 2px; }
+  .up { color: var(--good); font-weight: 700; }
+  .down { color: var(--bad); font-weight: 700; }
+  .insight { border-left: 3px solid var(--accent); padding: 2px 14px; margin: 14px 0 4px; color: var(--ink-2); }
+  .insight b { color: var(--ink); }
+  .warn { background: var(--warnbg); border-radius: 8px; padding: 10px 14px; font-size: .9rem; }
+  figure { margin: 22px 0; }
+  figcaption { color: var(--ink-3); font-size: .8rem; margin-top: 6px; }
+  svg text { font-family: -apple-system, "PingFang SC", sans-serif; }
+  .legend { display: flex; gap: 18px; font-size: .82rem; color: var(--ink-2); margin: 6px 0 0 2px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+  code { background: var(--card); border-radius: 4px; padding: 1px 6px; font-size: .85em; }
+  footer { color: var(--ink-3); font-size: .8rem; margin-top: 60px; border-top: 1px solid var(--line); padding-top: 14px; }
+</style>
+<main>
+
+<h1>RoutedFlow 实验总结</h1>
+<p class="sub">Phase-Gated Flow Routing · approach 分支实证记录 · 2026-07-31 → 08-04 ·
+共 7 次 25k 步级训练、3 次全量 rollout、40+ 次探针、2 次假阳性撤正</p>
+
+<div class="tiles">
+  <div class="tile"><div class="k">冠军闭环成绩（未被超越）</div><div class="v num">0.2875</div><div class="d">train-8 approach-SR · 旧 ckpt@~8.5k 步</div></div>
+  <div class="tile"><div class="k">C-VLM 语义泛化（本周最大增益）</div><div class="v num">0.33 → <span class="up">0.70</span></div><div class="d">A1 val_ood · 扩数据 + 增强 + t_g v2</div></div>
+  <div class="tile"><div class="k">z 通道承重现状（核心未解）</div><div class="v num down">0.36%</div><div class="d">同场景不同指令下的 flow 分化度</div></div>
+</div>
+
+<h2>Motivation · 为什么做<span class="tag">2026-08-03 讨论更新</span></h2>
+<div class="card">
+<p><b>三个痛点，三个回答：</b></p>
+<div class="wrap"><table>
+<tr><th style="width:52%">领域痛点</th><th>我们的回答</th></tr>
+<tr><td><b>P1 · 模态动静不匹配被忽视。</b>VLA 里 L（指令）是静态的——给定后整个执行期不变；V/A 是每步更新的流。把三者塞进同一个逐步执行的几十亿参数黑盒，等于每个控制步都重新“理解一遍语言”。dual-system 工作（GR00T N1、Helix、Hi Robot）已按频率分层，但都没回答：<i>语言到底在什么时刻需要重新参与？</i></td>
+<td>L <b>只被理解一次</b>，摊销成 grounded 的静态意图 z（语言 × 当前场景，非纯语言向量）；重新参与的时刻有明确定义——<b>相位边界</b>（多原子任务逐抓取周期重 ground）。</td></tr>
+<tr><td><b>P2 · 操作任务的相位结构被单一策略抹平。</b>抓稳之后手爪-物体相对位姿 C 是常数（可证明）；approach 需要场景语义，transport 却有解析解。单一 flow/policy 全程混喂，是在用学习逼近一个一半可解析的问题。</td>
+<td><b>相位路由</b>：approach 走学习的 C-VLM → flow → action 链；transport 走解析链 T<sub>rel</sub>(t)·E(t<sub>g</sub>)，有解析解处不学习。</td></tr>
+<tr><td><b>P3 · 黑盒 VLA 无法归因失败，而语义接口天生会被旁路。</b>端到端 VLA 失败时无从诊断；带中间接口的工作（如 PPI）接口可被 attention 绕过，却只做 ablation、不做因果诊断。</td>
+<td>接口窄 ⇒ <b>可测、可归因、可替换</b>。我们把“旁路”变成了测量学：z 置换、真实 z 分化、输入置换三件套——并在自己身上量到了旁路的真实数字（见第六/七节），证明该原则必须<b>结构强制</b>。</td></tr>
+</table></div>
+
+<figure>
+<svg viewBox="0 0 880 430" width="100%">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--ink-3)"/>
+    </marker>
+  </defs>
+  <!-- lanes -->
+  <rect x="20" y="26" width="700" height="150" rx="10" fill="var(--card)" stroke="var(--line)"/>
+  <text x="36" y="50" font-size="12" fill="var(--ink-3)">静态层 · 每 episode 执行一次</text>
+  <rect x="20" y="240" width="700" height="150" rx="10" fill="var(--card)" stroke="var(--line)"/>
+  <text x="36" y="264" font-size="12" fill="var(--ink-3)">动态层 · 每控制步（~30M 轻量回路）</text>
+  <!-- static lane boxes -->
+  <rect x="46" y="76" width="120" height="56" rx="8" fill="var(--surface)" stroke="var(--ink-3)"/>
+  <text x="106" y="100" font-size="13" fill="var(--ink)" text-anchor="middle">指令 L</text>
+  <text x="106" y="118" font-size="11" fill="var(--ink-3)" text-anchor="middle">静态·不再变化</text>
+  <rect x="226" y="70" width="150" height="66" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+  <text x="301" y="97" font-size="13" fill="var(--ink)" text-anchor="middle">C-VLM（L1）</text>
+  <text x="301" y="116" font-size="11" fill="var(--ink-3)" text-anchor="middle">语言 × 初始帧 grounding</text>
+  <rect x="446" y="80" width="96" height="46" rx="23" fill="var(--accent)"/>
+  <text x="494" y="108" font-size="14" font-weight="700" fill="#fff" text-anchor="middle">z</text>
+  <line x1="166" y1="104" x2="222" y2="104" stroke="var(--ink-3)" stroke-width="1.6" marker-end="url(#ar)"/>
+  <line x1="376" y1="103" x2="442" y2="103" stroke="var(--ink-3)" stroke-width="1.6" marker-end="url(#ar)"/>
+  <!-- z down to dynamic lane -->
+  <line x1="494" y1="126" x2="494" y2="236" stroke="var(--accent)" stroke-width="2.4" marker-end="url(#ar)"/>
+  <!-- dynamic lane boxes -->
+  <rect x="46" y="286" width="110" height="56" rx="8" fill="var(--surface)" stroke="var(--ink-3)"/>
+  <text x="101" y="310" font-size="13" fill="var(--ink)" text-anchor="middle">图像流 V</text>
+  <text x="101" y="328" font-size="11" fill="var(--ink-3)" text-anchor="middle">每步更新</text>
+  <rect x="216" y="286" width="130" height="56" rx="8" fill="var(--surface)" stroke="var(--ink-3)"/>
+  <text x="281" y="310" font-size="13" fill="var(--ink)" text-anchor="middle">L3 · flow</text>
+  <text x="281" y="328" font-size="11" fill="var(--ink-3)" text-anchor="middle">FK 链点未来轨迹</text>
+  <rect x="406" y="286" width="130" height="56" rx="8" fill="var(--surface)" stroke="var(--ink-3)"/>
+  <text x="471" y="310" font-size="13" fill="var(--ink)" text-anchor="middle">L4 · action</text>
+  <rect x="596" y="286" width="96" height="56" rx="8" fill="var(--surface)" stroke="var(--ink-3)"/>
+  <text x="644" y="318" font-size="13" fill="var(--ink)" text-anchor="middle">环境</text>
+  <line x1="156" y1="314" x2="212" y2="314" stroke="var(--ink-3)" stroke-width="1.6" marker-end="url(#ar)"/>
+  <line x1="346" y1="314" x2="402" y2="314" stroke="var(--ink-3)" stroke-width="1.6" marker-end="url(#ar)"/>
+  <line x1="536" y1="314" x2="592" y2="314" stroke="var(--ink-3)" stroke-width="1.6" marker-end="url(#ar)"/>
+  <path d="M 644 342 L 644 372 L 101 372 L 101 346" fill="none" stroke="var(--ink-3)" stroke-width="1.6" marker-end="url(#ar)"/>
+  <!-- phase boundary -->
+  <line x1="742" y1="30" x2="742" y2="390" stroke="var(--ink-3)" stroke-width="1.6" stroke-dasharray="7 6"/>
+  <text x="752" y="48" font-size="12" fill="var(--ink-2)">t_g 相位边界</text>
+  <rect x="756" y="70" width="108" height="96" rx="8" fill="var(--card)" stroke="var(--line)"/>
+  <text x="810" y="102" font-size="12.5" fill="var(--ink)" text-anchor="middle">transport</text>
+  <text x="810" y="122" font-size="11" fill="var(--ink-3)" text-anchor="middle">解析链</text>
+  <text x="810" y="140" font-size="11" fill="var(--ink-3)" text-anchor="middle">T_rel · E(t_g)</text>
+  <!-- annotation markers -->
+  <g font-size="13" font-weight="700">
+    <circle cx="301" cy="58" r="11" fill="var(--s2)"/><text x="301" y="63" fill="#fff" text-anchor="middle">1</text>
+    <circle cx="466" cy="186" r="11" fill="var(--s2)"/><text x="466" y="191" fill="#fff" text-anchor="middle">2</text>
+    <circle cx="370" cy="372" r="11" fill="var(--s2)"/><text x="370" y="377" fill="#fff" text-anchor="middle">3</text>
+    <circle cx="742" cy="410" r="11" fill="var(--s2)"/><text x="742" y="415" fill="#fff" text-anchor="middle">4</text>
+  </g>
+</svg>
+<figcaption><b>图注</b>：
+<b>①</b> L 只被理解一次——heavy 语义模块跑一次/episode，对比 VLA 每个控制步过 3–7B 参数的 VLM；z 是语言×场景的 grounded 绑定，不是缓存的语言向量。
+<b>②</b> z 是任务信息进入动态回路的<b>唯一通道</b>——这必须靠结构强制：只要动态回路存在任何其它任务信息入口，梯度就会绕开语义接口（我们对此做了定量测量，见第六、七节）。
+<b>③</b> V/A 动态回路轻量（~30M）且不接触语言，闭环逼近静态目标。
+<b>④</b> 语言重新参与的时刻被明确定义为相位边界：t_g 后切换到解析 transport 链；多原子长任务在每个抓取周期边界重新 ground（libero_10 的周期切分方案已设计）。</figcaption>
+</figure>
+</div>
+
+<h2>Contribution · 贡献主张（附证据状态）</h2>
+<div class="card">
+<div class="wrap"><table>
+<tr><th>#</th><th>主张</th><th>证据状态</th></tr>
+<tr><td><b>C1</b></td><td><b>概念框架：静态意图摊销 + 相位路由。</b>把 V/L/A 动静不匹配形式化为设计原则——L 理解一次、摊销为 grounded 意图 z、相位边界重入；transport 有解析解处不学习。回答了 dual-system 路线悬置的“语言何时重新参与”。</td>
+<td>🟡 框架完整并落档（§4.3）；机制承重仍待方案 A 验证</td></tr>
+<tr><td><b>C2</b></td><td><b>结构化 flow 接口：FK 链点（D11）。</b>32 个运动学链点的未来轨迹作为 flow 表示：零噪声 GT（纯 FK 投影，免逐帧分割/深度模型）、部署侧由本体感知免费算出、以结构换数据效率。</td>
+<td>✅ flow 头唯一 train/val 双降；QA 100% in-mask；驱动了 0.2875 的闭环执行</td></tr>
+<tr><td><b>C3</b></td><td><b>接口旁路的因果诊断方法论。</b>z 置换 / 真实 z 分化 / 输入置换三件套 + 训练内闭环探针。把“接口可能被绕过”从口头担忧变成可测量的数字——正是我们批评 PPI 只做 ablation 时缺的东西。</td>
+<td>✅ 已产出 4 项判决：harness 标定、task_emb=0.0（撤正一次误判）、场景布局旁路定位、goal 混训 0.36%</td></tr>
+<tr><td><b>C4</b></td><td><b>实证发现包。</b>(a) BC 过训的闭环崩塌曲线 + val loss 全程失明（robomimic 现象的完整复现与探针化解法）；(b) 语义模块单点饥饿的诊断与治疗（A1 ood 0.33→0.70）；(c) 视觉场景布局作为隐性任务旁路的量化。</td>
+<td>✅ 数据齐全，全部可复现（wandb + metrics.jsonl + char test）</td></tr>
+</table></div>
+<div class="warn"><b>主张边界（审稿人视角的诚实声明）：</b>闭环 SR 尚未超越基线冠军（0.2875）；z 结构性承重是当前主线上待攻克的最后一环——方案 A（z 直连 L4 语言槽）是下一轮实验。C1 的完整成立依赖它。</div>
+</div>
+
+<h2>附录 A · 三个关键测量的定义（自包含，无需上下文）</h2>
+<div class="card">
+<h3>A-1 · “held-out 命中率”（本页多处出现的 0.33 → 0.70）</h3>
+<p>基准共 10 个任务。训练时把其中 <b>2 个任务整体藏起来</b>——它们的任何数据都不参与训练，这两个称为 held-out（留出）任务。被测模块（C-VLM）的工作：看任务的<b>初始帧图像</b> + 读<b>语言指令</b>，输出一张 128×128 的热力图，表示“该去哪里抓”的空间分布。<b>命中判据</b>：热力图前 5 个峰值中，任何一个落在真值接触点 10 像素（512 分辨率下）以内，该样本记为命中；命中率 = 命中样本比例。</p>
+<p>因此 “held-out 命中率 0.70” 的含义是：面对<b>从未见过的任务</b>（新的指令 × 新的物体摆放组合），模型 70% 的情况下能把“该抓哪”指对。它衡量语义泛化能力，与“背出训练集”无关（同分布的对照指标 val_id 单独汇报）。</p>
+
+<h3>A-2 · “下游对 z 的消费 / z 承重”是怎么测的</h3>
+<p>z 是 C-VLM 输出的 384 维意图向量，按设计应是任务信息进入动作系统的<b>唯一通道</b>。“下游用没用它”通过两个受控实验量化：</p>
+<p><b>① 置换测试</b>：给 flow 预测器喂完全相同的输入（图像帧、查询点、深度），唯独把一批样本的 z 互相调换，比较输出变化。影响占比 = 平均|输出变化| ÷ 平均|输出幅值|。若模型使用 z，调换应显著改变输出；<b>实测 0.5–0.9%</b>（数值噪声级）。</p>
+<p><b>② 真实 z 分化测试</b>（更严格）：取<b>同一张</b>场景图，分别配上 8 个不同任务指令经 C-VLM 计算出的真实 z，得到 8 份 flow 预测；两两差异的平均值除以幅值 = <b>0.36%</b>。直白翻译：<i>“你让它干什么”对它预测的运动轨迹几乎没有影响</i>。</p>
+<p><b>③ 灵敏度对照</b>（排除“仪器不灵”）：用同样手法改变 flow 输入，动作输出变化 1.32（即约 130%）——测量方法本身足够灵敏，测不到就是真的没在用。</p>
+
+<h3>A-3 · 既然忽略了 z，动作是靠什么生成的？</h3>
+<p>靠<b>图像里的场景布局</b>。此基准中每个任务的物体摆放各不相同，初始画面本身就“泄露”了任务身份：训练时每个场景只对应一种示教行为，模型看一眼摆放即可知道该去哪，无需读指令。逐步生成链为：flow 预测器从当前帧（含机械臂当前姿态）预测未来轨迹——分布内依靠“此场景 + 此手臂姿态 → 示教中接下来怎么走”的统计规律；动作网络融合图像与 flow 输出动作（上文对照 ③ 表明 flow 是动作的主要驱动）。</p>
+<p>这条链在见过的任务上运转良好（SR 0.29），换新任务即垮（0.10–0.15）——<b>记忆型的视觉→行为映射不可泛化，这也正是感知模块（C-VLM）大幅进步却无法传导到闭环成绩的原因</b>。一个类比：学生做题不读题干（z），靠认卷面排版背答案——平时测验（见过的卷子）照样得分，换新卷就崩；上面的三个实验，等于用受控方式证明了“他确实没读题”，并把程度量化到了 0.36%。</p>
+</div>
+
+<h2>〇 · 全部 25k 级训练一览</h2>
+<div class="wrap"><table>
+<tr><th>run</th><th>关键配置差异</th><th class="num">train-8 SR</th><th class="num">ood-2 SR</th><th>命运</th></tr>
+<tr><td>joint_fold0_seed0（冠军）</td><td>旧 L1 · epoch 制 · OOM 早停于 ~8.5k 步</td><td class="num"><b>0.2875</b></td><td class="num">0.10</td><td>意外的早停成了最好的选点</td></tr>
+<tr><td>s25k @7k / @25k</td><td>旧 L1 · step 制</td><td class="num">0.1625 / 0.025</td><td class="num">0.10 / 0.10</td><td>暴露过训崩塌</td></tr>
+<tr><td>expand</td><td>新 L1 · 毒窗口（6.8%）</td><td class="num">≈0–0.1</td><td class="num">—</td><td>探针全程贴地</td></tr>
+<tr><td>expand2</td><td>新 L1 · 干净窗口</td><td class="num">≈0–0.1</td><td class="num">—</td><td>毒窗口假设证伪；18k 处终止</td></tr>
+<tr><td>freezeL1</td><td>新 L1 冻结</td><td class="num">0.0</td><td class="num">0.0</td><td>“微调磨损 z”假设证伪；5k 处终止</td></tr>
+<tr><td>goalmix @7500</td><td>新 L1 · +libero_goal 混训（58%）</td><td class="num">0.1375</td><td class="num"><b>0.15</b></td><td>探针选点 · ood 首次方向性向好</td></tr>
+</table></div>
+
+<h2>一 · 端到端可微 approach 链成立<span class="tag">07-31</span><span class="tag">奠基</span></h2>
+<div class="card">
+<p><b>结果。</b>C-VLM → z → L3 flow → L4 action 全链联合训练后，第一次真实闭环执行：
+<span class="num">train-8 = 0.2875，ood-2 = 0.10</span>（10 集/任务，闭合后脚本提起 5cm 判定）。
+此前经历三轮诊断：渲染视口坑 → 过早闭合 → 鲁棒锁存（连续 3 步阈值），SR 从 0 爬到 0.29。</p>
+<p class="insight"><b>启发：</b>① 全可微 approach 分支这条路走得通，FK 链点（D11）用结构换数据效率的设计在几何侧被验证；
+② “过早闭合”与阶段〇的“迟疑不闭”是<b>同一个切换信号脆弱性（D6）的两种失败极性</b>——相位切换需要显式治理，这本身就是论文动机的实证素材。</p>
+</div>
+
+<h2>二 · BC 训练越久，闭环越差；val loss 对此失明<span class="tag">08-02</span><span class="tag">⚠ 关键</span></h2>
+<div class="card">
+<p><b>结果。</b>同一配方三个 ckpt 的判决：@8.5k 步 <span class="num">0.2875</span> → @7k <span class="num">0.1625</span> → @25k（完整退火，train loss 最低）<span class="num down">0.025</span>。
+而 val 一步 BC loss 全程平台在 <span class="num">0.014–0.016</span>，对 10 倍的 SR 差异毫无反应。此现象随后在每一次 25k 训练中重演。</p>
+<p class="insight"><b>启发：</b>① BC 记忆越锐利，闭环 covariate shift 下越脆——train loss 低是病症不是成绩；
+② <b>val loss 不可用于模型选择</b>（robomimic 2021 的著名实证在我们身上重演）；
+③ 制度化应对：训练内置<b>闭环探针</b>（每 2500 步子进程真实 rollout）+ 周期快照——过训从“损失”降格为“曲线形状”，选点即可。</p>
+</div>
+
+<h2>三 · Loss 解剖：三条曲线三种命运<span class="tag">08-02</span></h2>
+<div class="card">
+<div class="wrap"><table>
+<tr><th class="num">step</th><th class="num">train L_C</th><th class="num">train flow</th><th class="num">val L_C</th><th class="num">val flow</th><th class="num">val action</th></tr>
+<tr><td class="num">500</td><td class="num">0.738</td><td class="num">0.00042</td><td class="num">2.29</td><td class="num">0.00036</td><td class="num">0.0180</td></tr>
+<tr><td class="num">7000</td><td class="num">0.009</td><td class="num">0.00020</td><td class="num">3.76</td><td class="num">0.00024</td><td class="num"><b>0.0137</b></td></tr>
+<tr><td class="num">25000</td><td class="num">0.0006</td><td class="num">0.00007</td><td class="num down">4.61</td><td class="num up">0.00018</td><td class="num">0.0154</td></tr>
+</table></div>
+<p><b>结果。</b>flow 是唯一 train/val 双降的健康头（FK 链点近似确定性几何）；C 头把 360 张训练图背到 0.0006，val 却一路涨到 4.61——典型的小数据辅助头过拟合；action 浅 U 后平台。</p>
+<p class="insight"><b>启发：</b>①不是“三 loss 冲突”（冲突会在 train 上互相拖累，实际 train 三线全降）——是<b>辅助监督数据量失衡</b>；
+② 文献对照成立：联合训练成功案例（GR-1/GR-2、ECoT）的辅助监督皆是海量数据，而我们的语义监督恰是全 pipeline 最稀缺的信号；
+③ 由此确立“语义模块单点饥饿”诊断 → 扩数据药方。</p>
+</div>
+
+<h2>四 · 扩数据打中靶心：A1 ood 翻倍<span class="tag">08-02/03</span><span class="tag">🎯 增益</span></h2>
+<div class="card">
+<figure>
+<svg viewBox="0 0 480 268" width="100%" style="max-width:480px">
+  <line x1="56" y1="220" x2="450" y2="220" stroke="var(--line)" stroke-width="1"/>
+  <line x1="56" y1="120" x2="450" y2="120" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 4"/>
+  <line x1="56" y1="20"  x2="450" y2="20"  stroke="var(--line)" stroke-width="1" stroke-dasharray="3 4"/>
+  <text x="48" y="224" font-size="11" fill="var(--ink-3)" text-anchor="end">0</text>
+  <text x="48" y="124" font-size="11" fill="var(--ink-3)" text-anchor="end">0.5</text>
+  <text x="48" y="24"  font-size="11" fill="var(--ink-3)" text-anchor="end">1.0</text>
+  <!-- val_id group -->
+  <rect x="102" y="65"  width="52" height="155" rx="4" fill="var(--s2)"><title>旧 L1 · val_id 0.775</title></rect>
+  <rect x="158" y="70"  width="52" height="150" rx="4" fill="var(--s1)"><title>扩数据 L1 · val_id 0.75</title></rect>
+  <text x="128" y="58" font-size="12" fill="var(--ink-2)" text-anchor="middle" class="num">0.775</text>
+  <text x="184" y="63" font-size="12" fill="var(--ink-2)" text-anchor="middle" class="num">0.75</text>
+  <text x="156" y="240" font-size="12" fill="var(--ink-2)" text-anchor="middle">val_id（同分布）</text>
+  <!-- val_ood group -->
+  <rect x="296" y="154" width="52" height="66"  rx="4" fill="var(--s2)"><title>旧 L1 · val_ood 0.33</title></rect>
+  <rect x="352" y="80"  width="52" height="140" rx="4" fill="var(--s1)"><title>扩数据 L1 · val_ood 0.70</title></rect>
+  <text x="322" y="147" font-size="12" fill="var(--ink-2)" text-anchor="middle" class="num">0.33</text>
+  <text x="378" y="73"  font-size="12" fill="var(--ink)"  text-anchor="middle" class="num" font-weight="700">0.70</text>
+  <text x="350" y="240" font-size="12" fill="var(--ink-2)" text-anchor="middle">val_ood（整任务留出）</text>
+</svg>
+<div class="legend"><span><i style="background:var(--s2)"></i>旧 L1（360 张裸训）</span><span><i style="background:var(--s1)"></i>扩数据 L1（1260 张 + 增强 + t_g v2）</span></div>
+<figcaption>A1 接触点命中率（fold-0，ckpt_best 同协议）。彻底失败的 table_center 任务从 0.00 → 0.82；prior 分层从倒挂恢复正序。</figcaption>
+</figure>
+<p><b>做法。</b>标签提取器按 suite 复用扩到 libero_object/goal（C 监督 500 → 1260 张）；接触点保持的随机裁剪 + 颜色抖动（不翻转不旋转——空间语言与朝向标签约束）；t_g 规则 v2 修复 10% 补抓噪声。</p>
+<p class="insight"><b>启发：</b>“数据太小”是真的，但<b>失衡地小</b>——L3/L4 的 13669 窗口有先例支撑且 flow val 健康，真正饿的只有语义模块。对症下药立竿见影。</p>
+</div>
+
+<h2>五 · t_g 毒窗口事件：一个标签的两种用途必须解耦<span class="tag">08-03</span></h2>
+<div class="card">
+<p><b>事件。</b>t_g 改为“最后一次去抖闭合”（修 C 标签的补抓噪声）后，fumble demo 的 approach 窗口延伸过失败闭合段：<b>6.8% 的训练窗口（1015 个）在教策略“接近途中闭爪再张开”</b>——而 rollout 的锁存对此零容忍。探针曲线全程贴地，机制上线首战即抓到问题。</p>
+<p><b>但随后证伪。</b>清除毒窗口的 expand2 探针依然贴地——污染是真实的，却不是崩塌主因（后续查明另有其因，见第六节）。</p>
+<p class="insight"><b>启发：</b>① 同一个标签字段服务多个消费者时，每个消费者的语义要分别审计（C 标签要“抓稳那次”，窗口边界要“首次闭合”）；
+② 一次修复没救回指标 ≠ 修复无价值——假设逐一证伪本身就是收敛路径。</p>
+</div>
+
+<h2>六 · z 通道不承重 + 两次假阳性撤正<span class="tag">08-03/04</span><span class="tag">⚠ 核心发现</span></h2>
+<div class="card">
+<p><b>测量链。</b>① 标定实验证明评测 harness 无罪（冠军在独占 GPU 下复现历史成绩）；
+② z 置换测试：<b>所有已训模型（含冠军）z 对 flow 输出的影响仅 0.5–0.9%</b>——z 从来都是装饰品，24 小时的 L1 优化拉锯优化的是不承重通道；
+③ 初判“旁路 = L4 的 task_emb 文本输入”，控制变量复测其影响<b>精确为 0.0</b>（<code>use_language_token: false</code> 自阶段〇起恒关）——撤正；
+④ 对照实验定位<b>真旁路 = 场景布局</b>：spatial 各任务摆放不同，分布内视觉即可识别任务（flow 对动作影响 1.32 vs task_emb 0.0）。</p>
+<p class="insight"><b>启发：</b>① <b>接口审计要审信息流，不只审张量形状</b>——三道审查（grill、逆向 spec、char test）都没接住“谁在给谁供任务信息”；
+② 任何 train/test 错位指控必须探针实证后立案（本周两次假阳性：flow 广播、task_emb——都在动手改代码前被廉价实验拦下）；
+③ 与批评 PPI 的“接口可绕过”完全同构——我们在自己身上量到了数字，这反而让 story 的因果诊断主张有了实锤素材。</p>
+</div>
+
+<h2>七 · goal 混训：数据歧义方向正确，注入点太弱<span class="tag">08-04</span></h2>
+<div class="card">
+<figure>
+<svg viewBox="0 0 660 300" width="100%">
+  <line x1="60" y1="250" x2="620" y2="250" stroke="var(--line)" stroke-width="1"/>
+  <line x1="60" y1="187.5" x2="620" y2="187.5" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 4"/>
+  <line x1="60" y1="125" x2="620" y2="125" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 4"/>
+  <text x="52" y="254" font-size="11" fill="var(--ink-3)" text-anchor="end">0</text>
+  <text x="52" y="191" font-size="11" fill="var(--ink-3)" text-anchor="end">0.1</text>
+  <text x="52" y="129" font-size="11" fill="var(--ink-3)" text-anchor="end">0.2</text>
+  <line x1="60" y1="156.25" x2="620" y2="156.25" stroke="var(--ink-3)" stroke-width="1.5" stroke-dasharray="7 5"/>
+  <text x="614" y="148" font-size="11" fill="var(--ink-2)" text-anchor="end">冠军同协议标定 0.15</text>
+  <!-- expand (aqua) -->
+  <polyline fill="none" stroke="var(--s3)" stroke-width="2"
+    points="60,250 120,218.8 180,218.8 240,218.8 300,250 360,218.8 420,187.5 480,250 540,250 600,218.8"/>
+  <!-- expand2 (orange), killed at 17.5k -->
+  <polyline fill="none" stroke="var(--s2)" stroke-width="2"
+    points="60,218.8 120,187.5 180,250 240,250 300,250 360,250 420,218.8"/>
+  <!-- goalmix (blue) -->
+  <polyline fill="none" stroke="var(--s1)" stroke-width="2.5"
+    points="60,218.8 120,156.3 180,156.3 240,187.5 300,218.8 360,250 420,218.8 480,218.8 540,218.8 600,250"/>
+  <g fill="var(--s1)">
+    <circle cx="120" cy="156.3" r="4"><title>goalmix @5000 · SR 0.15</title></circle>
+    <circle cx="180" cy="156.3" r="4"><title>goalmix @7500 · SR 0.15</title></circle>
+  </g>
+  <text x="150" y="142" font-size="12" fill="var(--ink)" font-weight="700" text-anchor="middle">峰值区 5–7.5k</text>
+  <text x="66"  y="268" font-size="11" fill="var(--ink-3)">2.5k</text>
+  <text x="240" y="268" font-size="11" fill="var(--ink-3)" text-anchor="middle">10k</text>
+  <text x="420" y="268" font-size="11" fill="var(--ink-3)" text-anchor="middle">17.5k</text>
+  <text x="600" y="268" font-size="11" fill="var(--ink-3)" text-anchor="middle">25k</text>
+  <text x="340" y="292" font-size="11" fill="var(--ink-3)" text-anchor="middle">optimizer step（探针：4 任务 × 5 集）</text>
+</svg>
+<div class="legend"><span><i style="background:var(--s1)"></i>goalmix（+goal 混训）</span><span><i style="background:var(--s2)"></i>expand2（干净窗口，18k 终止）</span><span><i style="background:var(--s3)"></i>expand（毒窗口）</span></div>
+<figcaption>训练内闭环探针曲线。goalmix 是新世代唯一“会涨”的曲线，峰值区触及冠军同协议标定线；峰后照例过训衰减（第二节现象重演）。</figcaption>
+</figure>
+<p><b>做法与结果。</b>把 libero_goal（十个任务共享同一场景、仅指令不同）混入训练（占 58% 窗口），意图用视觉歧义逼梯度走 z。
+行为层：探针峰值 0.15、全量 rollout <span class="num">0.1375 / 0.15</span>（ood 首次方向性向好，train 8 任务 7 个非零）。
+机制层：<b>真实 z 分化测试 = 0.36%</b>——同一张场景图配 8 种指令的 z，flow 几乎不变。z 依然没被打通。</p>
+<p class="insight"><b>启发：</b>① 歧义窗口只占少数（手臂一动目标就泄露），模型宁可在少数窗口上“预测均值”吃亏，也不去发现 192 个 token 里那一个 z——<b>D3 v1 的单 token 注入太弱</b>；
+② 行为层收益来自数据正则化而非机制打通——两种收益要用机制测量区分开，SR 涨不等于机制成立。</p>
+</div>
+
+<h2>八 · 工程弹药库（事故与制度）<span class="tag">持续</span></h2>
+<div class="card">
+<div class="wrap"><table>
+<tr><th>事故 / 风险</th><th>制度化应对</th></tr>
+<tr><td>OOM killer 四次击杀训练（容器 cgroup 上限 85 GiB，<code>free</code> 显示的是宿主内存；同机邻居实验最高吃到 54G）</td><td><code>--resume</code>（含 optimizer 状态）+ 每次 val 落 <code>ckpt_last</code> + <code>--stream-train</code> 流式模式（25G→8G）；单次被杀损失 ≤1000 步</td></tr>
+<tr><td>会话进程重启连带杀死后台训练</td><td><code>setsid nohup</code> 脱钩启动 + 守望器轮询</td></tr>
+<tr><td>val loss 选点失效；探针在 GPU 争用下的可信度疑云</td><td>闭环探针制度 + <b>测量仪器标定</b>（用已知好模型复测协议）先于一切归因</td></tr>
+<tr><td>两次假阳性指控（flow 广播 / task_emb）</td><td>“指控必须探针实证后立案”写入流程；两次都在改代码前被 2 分钟实验拦下</td></tr>
+<tr><td>标签质量（mask 翻转事故、t_g 补抓噪声、毒窗口）</td><td>数值锚定 QC + characterization test 7/7 常驻（<code>run_stage2.py char / char-env</code>）</td></tr>
+</table></div>
+</div>
+
+<h2>九 · 方法论沉淀与 story</h2>
+<div class="card">
+<p><b>Story 骨架（已入设计文档 §4.3）。</b>V/L/A 三模态动静不匹配：L 静态，应<b>只被理解一次</b>并摊销成 grounded 的紧凑意图（z = 语言×场景），由轻量动态回路闭环执行；语言在<b>相位边界</b>重新参与（多原子任务逐周期重 ground）。本周的实证给了它最锋利的注脚：<b>这条原则必须靠结构强制</b>——只要动态回路存在任何任务信息旁路（哪怕是场景布局这种“合法”通道），梯度就绕开语义接口。我们身上量出的 0.36%，正是对 dual-system 路线普遍未做因果诊断的批评素材。</p>
+<div class="warn">当前未解的核心问题：<b>如何让 z 结构性承重</b>。已选定下一轮实验方案 A——把 z 直连 L4 的语言槽（复用 ViLT 现成 <code>use_language_token</code> 管线但喂 z），梯度直达 L1；goal 混训数据继续提供歧义压力。判决指标不变：真实 z 分化测试 + 探针曲线 + 对 0.2875 的全量 rollout。</div>
+</div>
+
+<footer>RoutedFlow · fold-0 · LIBERO-spatial（+goal 混训）· 全部原始数据：experiments/ 下 metrics.jsonl 与 summary.json、wandb project <b>routedflow</b> · 文档：PIPELINE_IMPL_PLAN.md / PHASE_GATED_FLOW_ROUTING.md §4.3 / doc/TRAINING_PIPELINE_WALKTHROUGH.md</footer>
+</main>

@@ -35,15 +35,36 @@ conda 解释器（atm5090）并注入环境变量（`CUDA_VISIBLE_DEVICES=0`、`
 
 ```bash
 python3 run_stage1.py extract --suite libero_spatial            # 标签抽取（重放渲染，每 suite 约 1h）
-python3 run_stage1.py extract-hindsight --suite libero_spatial  # hindsight 帧（[0, 首闭合-guard] 均匀 8 帧）
 python3 run_stage1.py qc --suite libero_spatial                 # 标签质检
 python3 run_stage1.py dino-feats --suite libero_spatial         # 冻结 DINO 特征缓存（cached-feats 模式用）
 python3 run_stage1.py afun-prior --suite libero_spatial         # AFUN prior mask（afun 环境，GPU 空闲时跑）
 python3 run_stage2.py convert                                   # ATM light 格式转换
 python3 run_stage2.py chain-prep                                # FK 链查询点 + QA 图
+python3 run_stage2.py convert-lerobot --suite libero_spatial    # h5 -> LeRobot v2.1（训练主数据源，~35min/suite）
+python3 run_stage2.py verify-lerobot                            # parity（逐元素相等）+ benchmark
+python3 run_stage2.py preview-lerobot                           # 生成 videos_preview/（人眼可看的 yuv420p 副本）
 ```
-`--suite` 可换 `libero_object` / `libero_goal`（extract/extract-hindsight 需要对 goal 也跑，
-零闭合任务自动跳过）。
+`--suite` 可换 `libero_object` / `libero_goal`（零闭合任务自动跳过）。
+
+**数据格式（2026-08-04 迁移，grill 锁定：互通优先 / lossless / 手写 reader）**：训练主数据源
+是 `data/lerobot/<suite>/`——LeRobot v2.1 布局（对齐 starVLA 样例：per-episode parquet +
+mp4 + meta 五件套），但视频用 **libx264rgb qp0 无损**（解码帧 bitwise 等于 h5 uint8，非样例
+的有损 AV1），GOP=10 保证随机窗口访问。三路视频：agentview / eye_in_hand (128) +
+**agentview_512（仅 approach 段 [0, 首次闭合]，长度记在 episodes.jsonl 的 len_512）**——
+后者同时充当 L1 的 rgb0（第 0 帧）与 hindsight 采样源（任意帧，guard 在读取端应用），
+取代单独的 hindsight 帧抽取（`extract-hindsight` 已废弃）。C 标签（contact / 朝向 / 宽度 /
+t_g / 首闭合 / grasped_body）在 episodes.jsonl 的 routedflow 字段。DINO feats / AFUN prior /
+depth / seg 是可再生派生缓存**不迁**（h5 sidecar 不动）；c_labels h5 仍是抽取 source of
+truth。读取端手写（pyarrow + pyav，不装 lerobot pip——其 torch 版本钉会打手配的 5090
+cu128 torch）。⚠ **播放器色彩**：无损码流是 H.264 High 4:4:4 + RGB 平面，浏览器/VS Code
+预览等只认 yuv420p 的播放器会显示粉绿迷幻色——数据本身无损无误（ffmpeg 系解码器全部
+正确）。**人眼看视频一律用 `videos_preview/` 目录**（`run_stage2.py preview-lerobot` 生成
+的 yuv420p 副本，所有播放器正常；与 videos/ 同结构，仅供预览，loader 永不读取）。真无损
+RGB 和全播放器兼容在编码学上不可兼得（yuv420p 定义上就是色度减半），故双轨。
+benchmark（spatial train, 单进程）：cached 模式 189 vs 130 items/s
+（1.46×，RAM float32 ~17G → uint8 ~3.5G）；纯 stream 模式 26 vs 76（更慢，但 6 workers
+并行 ~159 it/s 远超训练需求 ~42 it/s，且新 cached 已装进旧 stream 的内存预算，极端内存
+压力下才需要纯 stream）。
 
 ### 1. Stage-1：L1+C head 预训（分钟级）
 
@@ -57,7 +78,7 @@ python3 run_stage1.py eval-l1 --run fold0_hindsight             # A1/A2 指标�
 | `--fold` | 0 | 留出 fold（fold k 整任务留出 tasks[2k,2k+1] 做 val_ood） |
 | `--steps` / `--bs` / `--lr` | 1200 / 64 / 3e-4 | step 制训练循环 |
 | `--extra-suites` | `libero_object,libero_goal` | C-head 开小灶（额外 suite 全量进 train）；`''` 关闭 |
-| `--hindsight` | 关 | train 输入随机换 pre-contact 帧（需先 extract-hindsight；val 恒 rgb0） |
+| `--hindsight` | 关 | train 输入随机换 pre-contact 帧（读 LeRobot agentview_512 视频，需先 convert-lerobot；val 恒 rgb0）；`--hindsight-guard` 默认 10 |
 | `--no-augment` | 关 | 关掉几何+颜色增强（默认开：保接触点随机 crop + color jitter） |
 | `--cached-feats` | 关 | 旧路径：冻结 DINO 缓存、无增强、仅主 suite（对照用） |
 | `--prior-dropout` / `--no-prior` | 0.3 / 关 | AFUN prior 通道的 dropout / 整体关闭 |
@@ -81,7 +102,8 @@ setsid nohup python3 run_stage2.py train --name joint_zA \
 | `--extra-suites` | `''` | 混入额外 suite 的 train 窗口（`libero_goal`＝视觉歧义杠杆；fold/val/rollout 协议保持 spatial） |
 | `--l1-ckpt` | fold0_seed0 | L1/CHead 热启动来源 |
 | `--freeze-l1` | 关 | 冻结 L1+CHead 且 λ_C=0（两阶段姿态；冻结部分走 eval 模式，train z==rollout z） |
-| `--stream-train` | 关 | 不缓存 train 集（~25G→~8G，慢 35%）；邻居实验挤占 85 GiB cgroup 时必开 |
+| `--data-backend` | lerobot | `lerobot`（默认，parquet+无损 mp4，cached 快 1.46× 且 RAM 省 5×）/ `h5`（旧 ATM light 路径，留作 A/B） |
+| `--stream-train` | 关 | 不缓存 train 视频（lerobot 后端按窗解码，RAM 最小）；仅邻居实验挤爆 85 GiB cgroup 时用 |
 | `--steps` / `--bs` / `--accum` | 25000 / 8 / 4 | 有效 batch 32；显存紧张降 bs 升 accum |
 | `--lam` | 0.5 1.0 0.1 | λ_C λ_flow λ_action |
 | `--flow-noise` | 0.01 | D10：L4 吃带噪预测 flow，不用 GT teacher forcing |
@@ -272,6 +294,32 @@ python3 run_stage2.py eval --run joint_zA --ckpt ckpt_step7500.pt --out-tag full
 - 已知增益杠杆（未做）：补完 60 epochs、λ_action 日程、latch 细化、ood 差距随 C-VLM held-out
   弱项复合（stage-1 A1 ood 0.33）
 - 坑：后台命令 `; echo rc=$?` 会把任务退出码遮成 0——真实 rc 只在输出文件里
+
+### 2026-08-04（第五批）— 数据层迁移 LeRobot v2.1（grill 锁定，先迁完再开方案A）
+- grill 四决定：**互通优先**（对齐 starVLA 样例 v2.1，为 T3/GR00T 生态铺路；验收=不倒退）、
+  **先迁完再开训**、**512 流 lossless**（推及全部视频：libx264rgb qp0，bitwise 无损）、
+  **手写 reader**（pyarrow+pyav，不装 lerobot pip 防 torch 版本钉）。前提核查：热路径
+  light h5 本无 gzip——旧 stream 慢的真因是每个 __getitem__ 整 demo 读入+张量化
+- 新模块 `src/routedflow/lerobot/`：converter（parquet 逐帧列 + 三路无损视频 + meta
+  五件套 + episodes.jsonl routedflow 标签字段；断点续跑）、reader、verify_parity；
+  `Stage2LeRobotDataset` 输出与旧版**逐元素严格相等**（parity 64 窗口全过，窗口集
+  13669==13669）；stage-2 engine `--data-backend`（默认 lerobot）
+- **agentview_512 approach 段视频取代 hindsight_frames.h5**（存全部 pre-contact 帧而非
+  8 帧采样，密度 ~8→~40 帧/demo；guard 移到读取端 `--hindsight-guard`）；
+  extract-hindsight 当日废弃；stage-1 hindsight 覆盖 360/360
+- benchmark：cached 189 vs 130 it/s（1.46×，RAM 17G→3.5G）；纯 stream 26 vs 76（慢，
+  但 workers 并行远超训练需求；新 cached 已装进旧 stream 内存预算）。踩坑二连：
+  ①无界容器缓存 × AUTO 解码线程 → pthread 耗尽（EAGAIN）→ LRU 128 + thread_count=2；
+  ②复用容器跨 seek 残留在飞帧 → BlockingIOError → seek 后 flush_buffers（500 次 soak 过）
+- 单测 16/16 + char 7/7 无回归；三 suites 全量转换完成：spatial 500 eps/2.3G（vs h5 4.9G）、
+  goal 400 eps/1.9G、object 500 eps/1.4G（**--labels-only 模式**：object 从无 light 数据也
+  不进 stage-2 窗口，只写 512 approach 视频 + meta，恰好覆盖 stage-1 hindsight 需求）；
+  goalmix 范围 parity 32339==32339 窗口、12 抽查逐元素相等；stage-1 hindsight 覆盖
+  1260/1260（三 suites 全量）
+- ⚠ 播放器色彩（用户报"粉绿迷幻色"）：4:4:4 RGB 无损码流在只认 yuv420p 的播放器
+  （浏览器/VS Code 预览）被按 YUV 误解——数据 bitwise 无误（训练解码路径出图验证）。
+  真无损与全播放器兼容不可兼得 → **双轨**：新增 `preview-lerobot`（make_previews.py）
+  镜像生成 `videos_preview/` yuv420p 副本供人眼，loader 永不读取；教程已记
 
 ### 2026-08-04（第四批）— 方案 A 代码落地 + hindsight C 标签（未开训）
 - **方案 A（z 直连 L4 语言槽）**：`ApproachPolicy(use_z=True)` 让 z (384) 顶替原 BERT

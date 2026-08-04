@@ -96,25 +96,28 @@ class Stage1Dataset(Dataset):
         (C-head 开小灶 2026-08-02 — semantic diversity for the C supervision only;
         fold/ood semantics remain defined on the primary suite).
       hindsight (requires raw, train split only): per __getitem__, the input frame
-        is drawn uniformly from the demo's pre-contact frames (stage1_cache/
-        <suite>/hindsight_frames.h5, built by extract_hindsight_frames.py) instead
-        of always rgb0 — C is a future event, so every frame before contact is a
-        valid input for the same label (supervision density 1 -> ~K per episode).
-        Labels/augment/prior are untouched (static camera; prior stays the t=0
-        AFUN mask — objects don't move during approach). Demos missing from the
-        cache silently fall back to rgb0; val splits always use rgb0 (matches
-        rollout, where z is computed once at phase start).
+        is drawn uniformly from the demo's pre-contact frames — C is a future
+        event, so every frame before contact is a valid input for the same label
+        (supervision density 1 -> ~t_close per episode). Source: the LeRobot
+        agentview_512 approach-segment video (data/lerobot/<suite>/, lossless;
+        frames [0, t_first_close]); a guard of `hindsight_guard` frames before
+        closure is excluded (arm-position leak, goalmix lesson). Labels/augment/
+        prior are untouched (static camera; prior stays the t=0 AFUN mask).
+        Demos missing from the LeRobot set silently fall back to rgb0; val
+        splits always use rgb0 (matches rollout: z computed once at phase start).
     """
 
     def __init__(self, suite="libero_spatial", fold=0, split="train", use_prior=True,
-                 extra_suites=None, raw=False, augment=False, hindsight=False, seed=0):
+                 extra_suites=None, raw=False, augment=False, hindsight=False,
+                 hindsight_guard=10, seed=0):
         self.samples = []
         self.raw, self.augment = raw, augment
         self.split = split
         self.hindsight = hindsight and split == "train"
+        self.hindsight_guard = hindsight_guard
         assert not (hindsight and not raw), "hindsight needs raw=True (online DINO)"
-        self._hs_files = {}   # suite -> h5 handle, opened lazily post-fork
-        self._hs_cover = set()  # (suite, task, demo) present in the hindsight cache
+        self._hs_meta = {}    # (suite, task, demo) -> (video_path, max_t exclusive)
+        self._hs_cover = set()
         self._rng = np.random.default_rng(seed)
         suite_dir = os.path.join(C_LABELS, suite)
         tasks = sorted(f[:-3] for f in os.listdir(suite_dir) if f.endswith(".h5"))
@@ -136,28 +139,32 @@ class Stage1Dataset(Dataset):
             self._index_hindsight()
 
     def _index_hindsight(self):
-        """Scan hindsight caches once (pre-fork, handles closed) -> coverage set."""
+        """Index LeRobot 512 approach videos once -> (path, sampling bound) map."""
+        from routedflow.lerobot.reader import V_512, LeRobotSuite
         for st in sorted({s["suite"] for s in self.samples}):
-            path = os.path.join(CACHE, st, "hindsight_frames.h5")
-            if not os.path.exists(path):
+            try:
+                suite = LeRobotSuite(st)
+            except AssertionError:
                 continue
-            with h5py.File(path, "r") as f:
-                for task in f.keys():
-                    for demo in f[task].keys():
-                        self._hs_cover.add((st, task, demo))
+            for e in suite.episodes:
+                rf = e["routedflow"]
+                if not rf.get("len_512"):
+                    continue
+                # sample t in [0, t_close - guard]; degenerate demos keep frame 0
+                max_t = max(1, rf["len_512"] - self.hindsight_guard)
+                key = (st, rf["task_dir"], rf["demo"])
+                self._hs_meta[key] = (suite.video_path(V_512, e["episode_index"]), max_t)
+                self._hs_cover.add(key)
         n_cov = sum(1 for s in self.samples
                     if (s["suite"], s["task"], s["demo"]) in self._hs_cover)
-        print(f"hindsight frames cover {n_cov}/{len(self.samples)} train samples "
+        print(f"hindsight (lerobot 512) covers {n_cov}/{len(self.samples)} train samples "
               f"(missing ones fall back to rgb0)", flush=True)
 
     def _hs_frame(self, s):
-        """Random pre-contact frame for sample s (lazy per-worker h5 handles)."""
-        st = s["suite"]
-        if st not in self._hs_files:
-            self._hs_files[st] = h5py.File(
-                os.path.join(CACHE, st, "hindsight_frames.h5"), "r")
-        frames = self._hs_files[st][s["task"]][s["demo"]]["rgb"]
-        return np.asarray(frames[int(self._rng.integers(len(frames)))])
+        """Random pre-contact frame for sample s, decoded from the 512 video."""
+        from routedflow.lerobot.video import decode_frame
+        path, max_t = self._hs_meta[(s["suite"], s["task"], s["demo"])]
+        return decode_frame(path, int(self._rng.integers(max_t)))
 
     def _load_suite(self, suite, sel_tasks, split, emb_map, use_prior):
         suite_dir = os.path.join(C_LABELS, suite)

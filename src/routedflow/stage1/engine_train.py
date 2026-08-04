@@ -88,8 +88,11 @@ def main():
     ap.add_argument("--no-augment", action="store_true")
     ap.add_argument("--hindsight", action="store_true",
                     help="train inputs drawn from pre-contact frames (hindsight "
-                         "relabeling: same C label, ~K frames/episode) — needs "
-                         "`run_stage1.py extract-hindsight` caches; val stays rgb0")
+                         "relabeling: same C label, ~t_close frames/episode) — reads "
+                         "the LeRobot agentview_512 video (run convert-lerobot first); "
+                         "val stays rgb0")
+    ap.add_argument("--hindsight-guard", type=int, default=10,
+                    help="exclude the last N pre-closure frames (arm-position leak)")
     ap.add_argument("--cached-feats", action="store_true",
                     help="legacy path: precomputed DINO cache, no aug, primary suite only")
     ap.add_argument("--seed", type=int, default=0)
@@ -108,7 +111,8 @@ def main():
     ds_tr = Stage1Dataset(fold=args.fold, split="train", use_prior=not args.no_prior,
                           extra_suites=extra, raw=raw,
                           augment=raw and not args.no_augment,
-                          hindsight=raw and args.hindsight, seed=args.seed)
+                          hindsight=raw and args.hindsight,
+                          hindsight_guard=args.hindsight_guard, seed=args.seed)
     ds_id = Stage1Dataset(fold=args.fold, split="val_id", use_prior=not args.no_prior,
                           raw=raw, augment=False)
     print(f"train {len(ds_tr)} (extra: {extra}) / val_id {len(ds_id)} · "

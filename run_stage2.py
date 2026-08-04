@@ -42,6 +42,12 @@ def main():
     cmd, rest = sys.argv[1], sys.argv[2:]
     table = {
         "convert": [PY, os.path.join(S2, "convert_light.py")],
+        "convert-lerobot": [PY, os.path.join(REPO, "src", "routedflow", "lerobot",
+                                             "convert_to_lerobot.py")],
+        "verify-lerobot": [PY, os.path.join(REPO, "src", "routedflow", "lerobot",
+                                            "verify_parity.py")],
+        "preview-lerobot": [PY, os.path.join(REPO, "src", "routedflow", "lerobot",
+                                             "make_previews.py")],
         "chain-prep": [PY, os.path.join(S2, "chain_points.py")],
         "test": [PY, os.path.join(REPO, "tests", "test_stage2_units.py")],
         "char": [PY, os.path.join(REPO, "tests", "test_char_labels.py")],

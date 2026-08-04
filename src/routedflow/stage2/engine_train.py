@@ -79,9 +79,13 @@ def main():
     ap.add_argument("--flow-noise", type=float, default=0.01)
     ap.add_argument("--l1-ckpt", default=os.path.join(EXP, "..", "stage1_l1_training",
                                                       "runs", "fold0_seed0", "ckpt_best.pt"))
+    ap.add_argument("--data-backend", choices=["lerobot", "h5"], default="lerobot",
+                    help="lerobot (default): parquet + lossless mp4 windows "
+                         "(streaming reads ONLY the window; cached holds uint8, ~4x "
+                         "smaller). h5: legacy ATM light path (kept for A/B).")
     ap.add_argument("--stream-train", action="store_true",
-                    help="no in-RAM train cache (~8G instead of ~14-25G); use when "
-                         "neighbor jobs crowd the 85 GiB cgroup")
+                    help="no in-RAM train video cache; use when neighbor jobs crowd "
+                         "the 85 GiB cgroup (lerobot streams per-window, cheap)")
     ap.add_argument("--extra-suites", default="",
                     help="comma list of extra suites mixed into TRAIN windows (e.g. "
                          "'libero_goal': one scene, ten goals — visual ambiguity forces "
@@ -120,12 +124,16 @@ def main():
     # neighbor experiments can eat 50G+ of the 85 GiB cgroup — cached train (~14G
     # with goal mix) then gets OOM-killed; streaming drops us to ~8G)
     extra = tuple(s for s in args.extra_suites.split(",") if s)
-    ds_tr = Stage2Dataset(fold=args.fold, split="train",
-                          cache_all=not args.stream_train,
-                          cache_image=not args.stream_train,
-                          extra_suites=extra, **DATASET_KW)
-    ds_id = Stage2Dataset(fold=args.fold, split="val_id", cache_all=False,
-                          cache_image=False, **DATASET_KW)
+    if args.data_backend == "lerobot":
+        from routedflow.stage2.dataset_lerobot import Stage2LeRobotDataset as DS
+    else:
+        DS = Stage2Dataset
+    ds_tr = DS(fold=args.fold, split="train",
+               cache_all=not args.stream_train,
+               cache_image=not args.stream_train,
+               extra_suites=extra, **DATASET_KW)
+    ds_id = DS(fold=args.fold, split="val_id", cache_all=False,
+               cache_image=False, **DATASET_KW)
     print(f"windows: train {len(ds_tr)} / val_id {len(ds_id)}"
           f"{' (streaming)' if args.stream_train else ''}", flush=True)
     # cached mode: few persistent workers (CoW over the cache killed a run once);

@@ -1,4 +1,10 @@
-"""Hindsight C-label frames: K extra agentview renders per demo, before contact.
+"""DEPRECATED (2026-08-04, same day as written): superseded by the LeRobot
+migration — convert_to_lerobot.py renders the FULL approach segment
+(agentview_512 video, every frame in [0, t_first_close]), which strictly
+contains these K sampled frames; Stage1Dataset(hindsight=True) now reads that
+video (guard applied at sample time). Kept only as a standalone fallback.
+
+Hindsight C-label frames: K extra agentview renders per demo, before contact.
 
 Rationale (2026-08-04, user decision): C is a FUTURE event of the episode —
 where the gripper will close is fixed the moment the demo is recorded — so every

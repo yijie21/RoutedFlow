@@ -86,6 +86,10 @@ def main():
                     help="comma list of suites whose demos all join the train split "
                          "(C-head 开小灶); '' disables")
     ap.add_argument("--no-augment", action="store_true")
+    ap.add_argument("--hindsight", action="store_true",
+                    help="train inputs drawn from pre-contact frames (hindsight "
+                         "relabeling: same C label, ~K frames/episode) — needs "
+                         "`run_stage1.py extract-hindsight` caches; val stays rgb0")
     ap.add_argument("--cached-feats", action="store_true",
                     help="legacy path: precomputed DINO cache, no aug, primary suite only")
     ap.add_argument("--seed", type=int, default=0)
@@ -103,7 +107,8 @@ def main():
     extra = [s for s in args.extra_suites.split(",") if s] if raw else None
     ds_tr = Stage1Dataset(fold=args.fold, split="train", use_prior=not args.no_prior,
                           extra_suites=extra, raw=raw,
-                          augment=raw and not args.no_augment, seed=args.seed)
+                          augment=raw and not args.no_augment,
+                          hindsight=raw and args.hindsight, seed=args.seed)
     ds_id = Stage1Dataset(fold=args.fold, split="val_id", use_prior=not args.no_prior,
                           raw=raw, augment=False)
     print(f"train {len(ds_tr)} (extra: {extra}) / val_id {len(ds_id)} · "

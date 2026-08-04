@@ -90,7 +90,8 @@ def main():
                        map_location=dev, weights_only=False)
     cfg = OmegaConf.load(STAGE0_CFG).model_cfg
     cfg.pop("track_gate_cfg", None)
-    model = JointApproachModel(TRACK_FN, cfg, l1_ckpt=None).to(dev)
+    z_to_l4 = bool(state["cfg"].get("z_to_l4", False))  # 方案A runs store the flag
+    model = JointApproachModel(TRACK_FN, cfg, l1_ckpt=None, z_to_l4=z_to_l4).to(dev)
     for part in ("l1", "chead", "l3", "l4"):
         getattr(model, part).load_state_dict(state[part])
     model.eval()
@@ -150,7 +151,8 @@ def main():
                     obs_v = np.stack([img_a, img_w], 1)  # (b, v, h, w, c)
                     extra = {"joint_states": obs["robot0_joint_pos"],
                              "gripper_states": obs["robot0_gripper_qpos"]}
-                    act, _ = model.l4.act(obs_v, extra)
+                    act, _ = model.l4.act(obs_v, extra,
+                                          z=z.cpu().numpy() if z_to_l4 else None)
                     model.l4._flow_ctx = None
                 for i in range(B):
                     if mode[i] == 0:

@@ -95,12 +95,26 @@ class Stage1Dataset(Dataset):
       extra_suites: additional suites whose demos ALL go into the train split
         (C-head 开小灶 2026-08-02 — semantic diversity for the C supervision only;
         fold/ood semantics remain defined on the primary suite).
+      hindsight (requires raw, train split only): per __getitem__, the input frame
+        is drawn uniformly from the demo's pre-contact frames (stage1_cache/
+        <suite>/hindsight_frames.h5, built by extract_hindsight_frames.py) instead
+        of always rgb0 — C is a future event, so every frame before contact is a
+        valid input for the same label (supervision density 1 -> ~K per episode).
+        Labels/augment/prior are untouched (static camera; prior stays the t=0
+        AFUN mask — objects don't move during approach). Demos missing from the
+        cache silently fall back to rgb0; val splits always use rgb0 (matches
+        rollout, where z is computed once at phase start).
     """
 
     def __init__(self, suite="libero_spatial", fold=0, split="train", use_prior=True,
-                 extra_suites=None, raw=False, augment=False, seed=0):
+                 extra_suites=None, raw=False, augment=False, hindsight=False, seed=0):
         self.samples = []
         self.raw, self.augment = raw, augment
+        self.split = split
+        self.hindsight = hindsight and split == "train"
+        assert not (hindsight and not raw), "hindsight needs raw=True (online DINO)"
+        self._hs_files = {}   # suite -> h5 handle, opened lazily post-fork
+        self._hs_cover = set()  # (suite, task, demo) present in the hindsight cache
         self._rng = np.random.default_rng(seed)
         suite_dir = os.path.join(C_LABELS, suite)
         tasks = sorted(f[:-3] for f in os.listdir(suite_dir) if f.endswith(".h5"))
@@ -118,6 +132,32 @@ class Stage1Dataset(Dataset):
             self._load_suite(cur_suite, cur_tasks, cur_split, emb_map, use_prior)
         self.train_tasks, self.ood_tasks = train_tasks, ood_tasks
         assert self.samples, f"empty split {split} fold {fold}"
+        if self.hindsight:
+            self._index_hindsight()
+
+    def _index_hindsight(self):
+        """Scan hindsight caches once (pre-fork, handles closed) -> coverage set."""
+        for st in sorted({s["suite"] for s in self.samples}):
+            path = os.path.join(CACHE, st, "hindsight_frames.h5")
+            if not os.path.exists(path):
+                continue
+            with h5py.File(path, "r") as f:
+                for task in f.keys():
+                    for demo in f[task].keys():
+                        self._hs_cover.add((st, task, demo))
+        n_cov = sum(1 for s in self.samples
+                    if (s["suite"], s["task"], s["demo"]) in self._hs_cover)
+        print(f"hindsight frames cover {n_cov}/{len(self.samples)} train samples "
+              f"(missing ones fall back to rgb0)", flush=True)
+
+    def _hs_frame(self, s):
+        """Random pre-contact frame for sample s (lazy per-worker h5 handles)."""
+        st = s["suite"]
+        if st not in self._hs_files:
+            self._hs_files[st] = h5py.File(
+                os.path.join(CACHE, st, "hindsight_frames.h5"), "r")
+        frames = self._hs_files[st][s["task"]][s["demo"]]["rgb"]
+        return np.asarray(frames[int(self._rng.integers(len(frames)))])
 
     def _load_suite(self, suite, sel_tasks, split, emb_map, use_prior):
         suite_dir = os.path.join(C_LABELS, suite)
@@ -151,7 +191,7 @@ class Stage1Dataset(Dataset):
                         "yaw_bin": np.int64(yb), "pitch_bin": np.int64(pb),
                         "w": np.float32(gq[0] - gq[1]),
                         "contact_rowcol": np.array([row, col], np.float32),  # @512
-                        "task": task, "demo": k,
+                        "task": task, "demo": k, "suite": suite,
                     }
                     if self.raw:
                         s["rgb"] = np.array(g["rgb0"])              # (512,512,3) u8
@@ -207,6 +247,8 @@ class Stage1Dataset(Dataset):
                 "contact_rowcol": torch.from_numpy(s["contact_rowcol"]),
             }
         rgb, prior_m = s["rgb"], s["prior_full"]
+        if self.hindsight and (s["suite"], s["task"], s["demo"]) in self._hs_cover:
+            rgb = self._hs_frame(s)
         row, col = float(s["contact_rowcol"][0]), float(s["contact_rowcol"][1])
         if self.augment:
             rgb, prior_m, row, col = self._augment_geo(rgb, prior_m, row, col)

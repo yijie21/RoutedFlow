@@ -38,6 +38,8 @@
 | 2026-08-02 | wandb 接入（project=routedflow，fail-safe 默认开）+ 训练循环改 **step 制**（VLA 惯例；stage2 25k 步 ≈ 旧 60 ep）；engine 加 --resume（存 opt state）+ ckpt_last + val 流式读（容器 cgroup 上限 85 GiB，同机邻居实验两度 OOM 击杀训练） |
 | 2026-08-03 | **z 通道不承重实锤 + story 落档**：标定实验证明评测 harness 无罪；z 敏感度测量显示**所有**已训模型（含冠军）的 z 对 flow 影响仅 0.5-0.9%。初判旁路为 L4 task_emb【误，次日撤正见下行】。V/L/A 动静不匹配 story 写入 PHASE_GATED_FLOW_ROUTING.md §4.3 |
 | 2026-08-04 | **goal 混训判决**：行为层探针峰 0.15（5-7.5k，触冠军标定线；ood 首次方向性向好 0.15）但机制层**真实 z 分化仅 0.36%**——数据歧义方向对、D3 v1 单 token 注入太弱；收益=正则化非机制。工程：setsid 脱钩启动 + --stream-train 流式（邻居 54G 挤爆 cgroup 两杀训练）。候选下一轮：方案 A（z 直连 L4 语言槽）。实验总结 artifact（motivation/contribution/测量定义附录）发布 |
+| 2026-08-04 | **方案 A + hindsight C 代码落地（未开训，用户指示只写代码）**：z (384) 顶替 BERT emb 走 L4 闲置语言槽（`--z-to-l4`，两 transformer `use_language_token` 打开，L_action→z→L1 直达梯度，不经 L3；raw text 仍不进 L4）；hindsight relabeling（C 是未来事件→contact 前每帧同标签，密度 1→~K/episode；抽取脚本存 [0, 首次闭合−guard] 均匀 K=8 帧防近接触泄露；仅 train split，val/rollout 语义不变）。单测 12/12+4/4（z 梯度贯通、z 变则 action 变）；合成 batch 前向验证双 language encoder 收到 z 梯度。待启动：全量抽取（~1-2h）→ stage-1 --hindsight 重训 → stage-2 --z-to-l4 + 判决包（真 z 分化 vs 0.36% / 探针 / rollout vs 0.2875）。同日理论对话：mentor 四担忧拆解——C 单点=采样非缺陷（跨 episode 学分布）、真瓶颈=监督**密度**不对称（200 action 对 vs 1 C 对/episode）、真实数据 C 提取有 VRB/手物接触检测先例、z 定义保留但消费/监督/表示三层升级路线 |
+| 2026-08-04 | **TurboVLA 对照分析存档（新增 §5.5）**：V+L→A（BERT+DINOv3+双向 cross-attn，0.2B/31ms/97.7%）与我们同战线不同轴（做小 L vs 静态 grounded L）；其 Table 3 语言消融（Goal 97.4→11.6、Spatial→87、Object 不掉）= scene-layout bypass 的外部独立复现。备选库 T1（token 集 z + 双向 cross-attn，方案 A+）/T2（GDINO 初始化 L1）/T3（TurboVLA 当 retrofit backbone），各带触发条件 + 廉价探针，到点提醒不预投。威胁：31ms 拆掉静态化的效率论据 → story 重心移到 grounded contract/重入时机/因果测量 |
 | 2026-08-04 | **task_emb 论断撤正 + 接口摘除**：控制变量复测 task_emb 对策略输出影响 = **0.0**（use_language_token 自阶段〇起恒 false，文本从未进策略）；**真旁路 = 场景布局**（spatial 各任务摆放不同，分布内视觉即可识别任务，梯度不需要 z）。task_emb 从 ApproachPolicy 接口正式摘除（单测钉住）；断旁路唯一路径 = 数据层视觉歧义（libero_goal 同场景多目标混训，待拍板）。§4.3 已更新 |
 | 2026-08-03 | **扩数据 A1 ood 0.33→0.70**（1260 样本+增强+t_g v2；table_center 0→0.82）；闭环探针上线首战即抓 bug：t_g v2 使 6.8% approach 窗口含 fumble 闭合序列 → 探针全程贴地；修复=解耦（C 标签用末次闭合、窗口边界用首次闭合）；A/B（expand2）在跑 |
 | 2026-08-02 | **⚠ 25k 步重训判决：BC 越久闭环越差**——旧@8.5k 0.2875 / 新best@7k 0.1625 / 新final@25k **0.025**（ood 均 0.10）；val 一步 BC loss 全程平台 0.014-0.016 对此失明。冠军仍为旧 ckpt。下轮候选：训练中闭环探针做 rollout-based 选择 + 周期快照；详见 §3.6 |
@@ -574,6 +576,44 @@ $$E(t) = \underbrace{T(t)\,T(t_g)^{-1}}_{T_{rel}(t)\text{：flow SVD 直接给�
 - ☐ phase 状态机实现
 - ☐ 端到端 eval + ablation 矩阵
 - ☐ 结果并入论文叙事（诊断 §3 + 修复 §4）
+
+---
+
+## 5.5 TurboVLA 对照分析与备选方案库（2026-08-04，用户指示存档 + 择机提醒）
+
+> 论文：TurboVLA（arXiv 2607.27205，HUST+华为），全文在 `RoutedFlow/doc/2607.27205v1.pdf_by_PaddleOCR-VL-1.6.md`。
+> 用途：方案 A 之后的备选升级路径库。**每条都有触发条件和廉价前置探针——到点由 Claude 主动提醒，不预先投入。**
+
+### 5.5.1 论文一句话与与我们的关系
+
+V+L→A：DINOv3 编视觉 + BERT 编指令（保留 token 序列不 pooling），6 层双向 cross-attention
+（Grounding DINO grounding 预训权重初始化）直接融合，ACT 式 decoder 一次出 12 步 chunk。
+0.2B / 31ms / LIBERO 四 suite 联训 97.7%（超 π0.5 的 96.9），无 embodied pretraining。
+**与我们同战线不同轴**：它把 L 做小做便宜、留在每步循环；我们把 L 做静态 grounded、只在
+phase 边界重入。它不是快慢层。
+
+### 5.5.2 Table 3 = 我们 scene-layout bypass 的外部独立复现（可引用）
+
+语言消融分 suite：Object 99.4 不掉 / Spatial 99.2→87.0 / **Goal 97.4→11.6**。在 97% 级模型上
+复现了我们的旁路诊断：spatial/object 靠布局即可认任务，goal 只有语言能分。同时验证
+libero_goal 作歧义杠杆选对了。Task-ID embedding 恢复到 95.4（闭集身份承载大部分信息，
+语义只 +2.3）——解释我们 real-z 分化难度时可用。
+
+### 5.5.3 备选方案库（均非"用了必涨"；证据来自全量数据 97% 分数段，迁移有失效条件）
+
+| # | 方案 | 理论地位 | 我们域的失效条件 | 触发条件（到点提醒） | 廉价前置探针 |
+|---|---|---|---|---|---|
+| T1 | z 升级为 token 集（37² fusion map 或 top-k 峰局部特征）+ 与 L4 视觉 token 双向 cross-attn（方案 A+） | 表达能力严格包含单 token（结构性事实）；他们实测无交互 95.2→双向 97.7，Goal +6.6 | **必要非充分**：只解决带宽，不解决激励——旁路是激励问题，架构不强迫梯度走 z（我们已实测）；z 由 360 样本 L1 产出，接口粗运不出 z 里没有的信息；小数据 +6 层 cross-attn 可能过拟合 | **方案 A 判决包出来后**：梯度通了但真 z 分化仍低 → 带宽被指认，上 T1；方案 A 已见效 → 不需要 | 方案 A 判决包本身 |
+| T2 | L1 fusion 换/初始化为 Grounding DINO 前端 | 三条里理论最扎实：语言→视觉绑定不该从 360 样本从零学，对 A1 ood 天花板针对性最强 | 非 drop-in（我们 L1 是 DINOv2 patch + AFUN prior 通道的自定义结构，嫁接≈换前端，中大型手术）；LIBERO 渲染 vs 自然图 domain gap | **下次动 L1 之前**（无论因为 A1 天花板还是 T1 需要更强的 z 源） | ~2h：GDINO 零样本在 val_ood 任务测 grounding 命中率 vs 已训 L1 的 A1——零样本赢则手术值 |
+| T3 | TurboVLA 当 retrofit 轨 backbone（原版 = 我们无路由 ablation 基线） | 战略/定位手段，非机制改进：保证地板高 + 对照干净，**不保证插入 z 后承重** | 复现风险：97.7 是 4×4090 全量数据数字，我们单卡 + fold 协议 + approach-only，数字必然不同 | **retrofit 轨启动时**（机制在自研 pipeline 打通之后）；或 mentor 再问"比不过 π0"时作论据 | 单卡先在 libero_goal 子集复现 TurboVLA 能否训动 |
+
+### 5.5.4 对 story 的威胁（写作时必须处理）
+
+31ms/32Hz 证明"语言每步跑太重"可以靠**做小 L** 解决——效率不再是静态化的充分动机。
+story 重心必须落在静态 grounded z 买到的效率之外的东西：可解释可审计的空间 contract
+（可被上层 planner 异步生成）、phase 边界重入的时机结构、语言承重的因果测量方法论
+（TurboVLA 只有 ablation-only，正是我们批评 PPI 的证据类型）。TurboVLA 应引为
+"执行层去 LLM 化"的同路人，我们在其上追问"语言进来后何时、以何种量、是否真的被消费"。
 
 ---
 

@@ -80,6 +80,49 @@ def test_l4_flow_ctx_gradient():
     assert a.shape == (b, 7)
 
 
+def test_z_to_l4_language_slot():
+    """方案A: z rides L4's language slots — gradient reaches z, output depends on z."""
+    from omegaconf import OmegaConf
+
+    from routedflow.stage2.joint_model import ApproachPolicy
+    cfg = OmegaConf.load(os.path.join(REPO, "experiments", "stage0_routing_causal_test",
+                                      "configs", "stage0_vilt.yaml")).model_cfg
+    cfg.pop("track_gate_cfg", None)
+    cfg.language_encoder_cfg.input_size = 384
+    cfg.spatial_transformer_cfg.use_language_token = True
+    cfg.temporal_transformer_cfg.use_language_token = True
+    torch.manual_seed(0)
+    pol = ApproachPolicy(use_z=True, **cfg)
+    b, v, t, tl, n = 1, 2, 2, 16, 32
+    obs = torch.rand(b, v, t, 3, 128, 128)
+    track_obs = torch.randint(0, 255, (b, v, t, 1, 3, 128, 128)).float()
+    extra = {"joint_states": torch.randn(b, t, 7),
+             "gripper_states": torch.randn(b, t, 2)}
+    # gradient artery: L_action-side output must backprop into z
+    pol.set_flow(torch.rand(b, t, tl, n, 2))
+    z = torch.randn(b, 384, requires_grad=True)
+    out = pol.spatial_encode(obs, track_obs, z, extra, return_recon=False)
+    out.sum().backward()
+    assert z.grad is not None and float(z.grad.abs().sum()) > 0
+    # structural consumption: with everything else fixed, changing z changes the action
+    pol.eval()
+    flow = torch.rand(b, 1, tl, n, 2)
+    obs_np = np.random.randint(0, 255, (b, v, 128, 128, 3)).astype(np.uint8)
+    extra_np = {"joint_states": np.random.randn(b, 7).astype(np.float32),
+                "gripper_states": np.random.randn(b, 2).astype(np.float32)}
+    pol.reset()
+    pol.set_flow(flow)
+    a1, _ = pol.act(obs_np, extra_np, z=np.zeros((b, 384), np.float32))
+    pol.reset()
+    pol.set_flow(flow)
+    a2, _ = pol.act(obs_np, extra_np, z=np.full((b, 384), 3.0, np.float32))
+    assert not np.allclose(a1, a2), "z must be load-bearing in the 方案A wiring"
+    # interface: still no task_emb anywhere in the approach-branch API
+    import inspect
+    assert "task_emb" not in inspect.signature(pol.act).parameters
+    assert "z" in inspect.signature(pol.forward_loss).parameters
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

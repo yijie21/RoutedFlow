@@ -25,33 +25,49 @@ class ApproachPolicy(BCViLTPolicy):
     """BCViLTPolicy with (a) an external flow source and (b) NO task_emb input.
 
     task_emb removal (2026-08-03): the approach branch's task information enters
-    ONLY through z -> L3 -> flow (design §2.7 "z 是唯一任务通道"). task_emb was
-    verified a dead input anyway (use_language_token=false everywhere; measured
-    act-output diff exactly 0.0 under task_emb swap), so the interface drops it;
-    upstream plumbing still computes-and-discards text encodings, which we feed
-    with zeros. The real bypass to watch is SCENE LAYOUT in images — countered
-    at the data level (visually ambiguous task sets, e.g. libero_goal), not here.
+    ONLY through z (design §2.7 "z 是唯一任务通道"). task_emb was verified a dead
+    input anyway (use_language_token=false everywhere; measured act-output diff
+    exactly 0.0 under task_emb swap), so the interface drops it.
+
+    方案A (2026-08-04, use_z=True): z itself rides the formerly-idle language
+    slots — language_encoder_spatial/temporal consume z (input_size=384,
+    use_language_token=true in both transformer cfgs), giving L_action a DIRECT
+    gradient path to L1 that does not detour through L3's flow. Raw text still
+    never enters L4; z stays the only task channel. With use_z=False the slots
+    are fed zeros and gated off (legacy ckpt-compatible).
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, use_z=False, **kwargs):
         super().__init__(**kwargs)
         # External flow replaces the internal frozen track transformer. Keep a
         # stub (not `del`): vilt's train() override calls self.track.eval().
         self.track = nn.Identity()
         self._flow_ctx = None
+        self.use_z = use_z
+        if use_z:
+            assert self.spatial_transformer_use_text and self.temporal_transformer_use_text, \
+                "use_z=True requires use_language_token=true in both transformer cfgs"
 
     def set_flow(self, flow_agentview):
         """flow_agentview: (b, t, tl, n, 2) — may carry gradient (D10)."""
         self._flow_ctx = flow_agentview
 
-    def forward_loss(self, obs, track_obs, track, extra_states, action):
-        dummy = torch.zeros(obs.shape[0], 768, device=obs.device, dtype=obs.dtype)
-        return super().forward_loss(obs, track_obs, track, dummy, extra_states, action)
+    def forward_loss(self, obs, track_obs, track, extra_states, action, z=None):
+        if self.use_z:
+            assert z is not None, "use_z=True: forward_loss needs z (b, 384)"
+            emb = z  # carries gradient: L_action -> language slots -> z -> L1
+        else:
+            emb = torch.zeros(obs.shape[0], 768, device=obs.device, dtype=obs.dtype)
+        return super().forward_loss(obs, track_obs, track, emb, extra_states, action)
 
-    def act(self, obs, extra_states):
+    def act(self, obs, extra_states, z=None):
         import numpy as np
-        dummy = np.zeros((obs.shape[0], 768), dtype=np.float32)
-        return super().act(obs, dummy, extra_states)
+        if self.use_z:
+            assert z is not None, "use_z=True: act needs z (b, 384) numpy"
+            emb = np.asarray(z, dtype=np.float32)
+        else:
+            emb = np.zeros((obs.shape[0], 768), dtype=np.float32)
+        return super().act(obs, emb, extra_states)
 
     def track_encode(self, track_obs, task_emb):
         """External-flow version of BCViLTPolicy.track_encode (same tail as upstream)."""
@@ -73,7 +89,7 @@ class ApproachPolicy(BCViLTPolicy):
 
 class JointApproachModel(nn.Module):
     def __init__(self, track_fn, policy_kwargs, l1_ckpt=None, lam=(0.5, 1.0, 0.1),
-                 flow_noise=0.01, use_cross_attn=False):
+                 flow_noise=0.01, use_cross_attn=False, z_to_l4=False):
         super().__init__()
         self.l1 = L1FrontEnd()
         self.chead = CHead()
@@ -82,7 +98,12 @@ class JointApproachModel(nn.Module):
             self.l1.load_state_dict(state["l1"])
             self.chead.load_state_dict(state["chead"])
         self.l3 = L3RobotFlow(track_fn, cond_dim=384, use_cross_attn=use_cross_attn)
-        self.l4 = ApproachPolicy(**policy_kwargs)
+        self.z_to_l4 = z_to_l4
+        if z_to_l4:  # 方案A: z rides L4's language slots (see ApproachPolicy docstring)
+            policy_kwargs["language_encoder_cfg"]["input_size"] = 384
+            policy_kwargs["spatial_transformer_cfg"]["use_language_token"] = True
+            policy_kwargs["temporal_transformer_cfg"]["use_language_token"] = True
+        self.l4 = ApproachPolicy(use_z=z_to_l4, **policy_kwargs)
         self.lam, self.flow_noise = lam, flow_noise
 
     def forward_loss(self, batch):
@@ -112,7 +133,7 @@ class JointApproachModel(nn.Module):
             flow = flow + torch.randn_like(flow) * self.flow_noise
         self.l4.set_flow(flow)
         l_action, act_dict = self.l4.forward_loss(obs, track_obs, track,
-                                                  extra_states, actions)
+                                                  extra_states, actions, z=z)
         self.l4._flow_ctx = None
 
         lam = self.lam

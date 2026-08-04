@@ -146,6 +146,13 @@ forcing），`l4.set_flow(...)` 存进 `ApproachPolicy`。`ApproachPolicy` 是 A
 → 时空 transformer → 动作头，BC loss → **L_action**。task_emb 已从接口摘除
 （2026-08-04；实测其影响本为 0.0——`use_language_token: false` 一直关闭）。
 
+**方案 A（`--z-to-l4`，2026-08-04 落地，默认关）**：z (384) 顶替原 BERT emb 走这条
+曾经闲置的语言槽——`language_encoder_spatial/temporal` 输入改 384、两个
+`use_language_token` 打开。z 以 spatial 语言 token + temporal 语言 token 两个位置
+进入 L4，L_action 由此获得**不经 L3 flow 的直达梯度**到 L1。raw text 仍然不进
+L4（z 依旧是唯一任务通道）；rollout 时 eval_rollout 从 ckpt cfg 读到 flag，把
+每 episode 算一次的 z 传给 `act(obs, extra_states, z=...)`。
+
 ⚠ **真正的旁路是场景布局**：spatial 各任务物体摆放不同，策略与 L3 只看图像就能
 在分布内识别任务，实测 z 对 flow 影响仅 0.5-0.9%（z 未承重）。对策在数据层：
 混入"同场景、多目标、仅语言可分"的任务（libero_goal）迫使梯度走 z。

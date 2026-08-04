@@ -2,7 +2,8 @@
 """Stage-1 orchestrator (C distribution prediction). Run with any python3; heavy
 work is delegated to the right conda interpreter with the right env vars.
 
-  data:      extract / qc / viz / augment-links        (labels + visualization)
+  data:      extract / extract-hindsight / qc / viz / augment-links
+             (labels + pre-contact hindsight frames + visualization)
   caches:    dino-feats / afun-prior                   (offline jobs #3 / #2)
   training:  train-l1 [engine args...] / eval-l1 --run <name> / test
   status
@@ -42,6 +43,16 @@ def sh(cmd):
 
 def cmd_extract(args):
     cmd = [PY, os.path.join(REPO, "src", "routedflow", "extract_c_labels.py"), "--suite", args.suite]
+    if args.tasks_limit:
+        cmd += ["--tasks-limit", str(args.tasks_limit)]
+    if args.demos_limit:
+        cmd += ["--demos-limit", str(args.demos_limit)]
+    return sh(cmd)
+
+
+def cmd_extract_hindsight(args):
+    cmd = [PY, os.path.join(REPO, "src", "routedflow", "extract_hindsight_frames.py"),
+           "--suite", args.suite]
     if args.tasks_limit:
         cmd += ["--tasks-limit", str(args.tasks_limit)]
     if args.demos_limit:
@@ -101,14 +112,15 @@ def main():
 
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
-    cmds = (("extract", cmd_extract), ("qc", cmd_qc), ("viz", cmd_viz), ("status", cmd_status),
+    cmds = (("extract", cmd_extract), ("extract-hindsight", cmd_extract_hindsight),
+            ("qc", cmd_qc), ("viz", cmd_viz), ("status", cmd_status),
             ("augment-links", cmd_augment_links), ("dino-feats", cmd_dino_feats),
             ("afun-prior", cmd_afun_prior), ("test", cmd_test))
     for name, fn in cmds:
         p = sub.add_parser(name)
         p.set_defaults(fn=fn)
         p.add_argument("--suite", default="libero_spatial")
-        if name == "extract":
+        if name in ("extract", "extract-hindsight"):
             p.add_argument("--tasks-limit", type=int, default=None)
             p.add_argument("--demos-limit", type=int, default=None)
     args = ap.parse_args()

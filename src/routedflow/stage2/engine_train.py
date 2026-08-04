@@ -92,6 +92,11 @@ def main():
                          "erodes a good z (A1 ood 0.70) faster than the policy can learn it "
                          "(probe evidence 2026-08-03); frozen L1 also runs in eval mode so "
                          "train-time z == rollout z (no dropout noise)")
+    ap.add_argument("--z-to-l4", action="store_true",
+                    help="方案A: feed z into L4's (formerly idle) language-token slots "
+                         "— language encoders take z (384) and use_language_token turns "
+                         "on in both transformers, so L_action gets a DIRECT gradient "
+                         "path to L1. Flag is saved in ckpt cfg; eval_rollout reads it.")
     ap.add_argument("--use-cross-attn", action="store_true")
     ap.add_argument("--resume", default=None,
                     help="ckpt path: restore model (+opt if saved) and continue from its step")
@@ -137,7 +142,8 @@ def main():
     lam = (0.0, args.lam[1], args.lam[2]) if args.freeze_l1 else tuple(args.lam)
     model = JointApproachModel(TRACK_FN, cfg, l1_ckpt=args.l1_ckpt, lam=lam,
                                flow_noise=args.flow_noise,
-                               use_cross_attn=args.use_cross_attn).to(dev)
+                               use_cross_attn=args.use_cross_attn,
+                               z_to_l4=args.z_to_l4).to(dev)
     groups = [
         {"params": list(model.l3.parameters()), "lr": 1e-4},
         {"params": list(model.l4.parameters()), "lr": 3e-4},

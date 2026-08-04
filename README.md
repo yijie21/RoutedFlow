@@ -24,6 +24,90 @@ Phase-Gated Flow Routing 的实现代码库。按接触时刻 $t_g$（夹爪闭�
 - LIBERO 配置：`~/.libero/config.yaml` 是全局共享文件**不许改**，需要自定义时用 `LIBERO_CONFIG_PATH` 环境变量
 - `third_party/ATM` 是指向 `/workspace/code/ATM` 的 symlink（不是拷贝——里面有大 checkpoint 和数据集，原地引用）
 
+## 训练与评测教程（2026-08-04 版）
+
+所有命令经根目录的 orchestrator 跑（`run_stage1.py` / `run_stage2.py`），它们负责选对
+conda 解释器（atm5090）并注入环境变量（`CUDA_VISIBLE_DEVICES=0`、`LIBERO_CONFIG_PATH`、
+`MUJOCO_GL=egl`、`PYTHONPATH`），**不要直接裸跑 src 下的脚本**。长任务一律
+`setsid nohup <cmd> > <log> 2>&1 & disown` 挂起（会话进程退出会连坐普通后台任务，已吃过亏）。
+
+### 0. 数据准备（一次性；已完成的可跳过，全部断点续跑安全）
+
+```bash
+python3 run_stage1.py extract --suite libero_spatial            # 标签抽取（重放渲染，每 suite 约 1h）
+python3 run_stage1.py extract-hindsight --suite libero_spatial  # hindsight 帧（[0, 首闭合-guard] 均匀 8 帧）
+python3 run_stage1.py qc --suite libero_spatial                 # 标签质检
+python3 run_stage1.py dino-feats --suite libero_spatial         # 冻结 DINO 特征缓存（cached-feats 模式用）
+python3 run_stage1.py afun-prior --suite libero_spatial         # AFUN prior mask（afun 环境，GPU 空闲时跑）
+python3 run_stage2.py convert                                   # ATM light 格式转换
+python3 run_stage2.py chain-prep                                # FK 链查询点 + QA 图
+```
+`--suite` 可换 `libero_object` / `libero_goal`（extract/extract-hindsight 需要对 goal 也跑，
+零闭合任务自动跳过）。
+
+### 1. Stage-1：L1+C head 预训（分钟级）
+
+```bash
+python3 run_stage1.py train-l1 --name fold0_hindsight --hindsight
+python3 run_stage1.py eval-l1 --run fold0_hindsight             # A1/A2 指标（--ckpt 默认 ckpt_best.pt）
+```
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `--fold` | 0 | 留出 fold（fold k 整任务留出 tasks[2k,2k+1] 做 val_ood） |
+| `--steps` / `--bs` / `--lr` | 1200 / 64 / 3e-4 | step 制训练循环 |
+| `--extra-suites` | `libero_object,libero_goal` | C-head 开小灶（额外 suite 全量进 train）；`''` 关闭 |
+| `--hindsight` | 关 | train 输入随机换 pre-contact 帧（需先 extract-hindsight；val 恒 rgb0） |
+| `--no-augment` | 关 | 关掉几何+颜色增强（默认开：保接触点随机 crop + color jitter） |
+| `--cached-feats` | 关 | 旧路径：冻结 DINO 缓存、无增强、仅主 suite（对照用） |
+| `--prior-dropout` / `--no-prior` | 0.3 / 关 | AFUN prior 通道的 dropout / 整体关闭 |
+| `--val-every` / `--log-every` / `--seed` / `--no-wandb` | 100 / 20 / 0 / 关 | 常规 |
+
+产物：`experiments/stage1_l1_training/runs/<name>/{ckpt_best,ckpt_final}.pt` + `metrics.jsonl`。
+
+### 2. Stage-2：联合训练（约 15s/20步，25k 步 ≈ 5-6h）
+
+```bash
+# 方案 A 当前推荐配置（z 走 L4 语言槽 + goal 混训 + hindsight 预训的 L1）：
+setsid nohup python3 run_stage2.py train --name joint_zA \
+    --z-to-l4 --extra-suites libero_goal --stream-train \
+    --l1-ckpt experiments/stage1_l1_training/runs/fold0_hindsight/ckpt_best.pt \
+    > experiments/stage2_approach_joint/runs/joint_zA_launch.log 2>&1 & disown
+```
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `--z-to-l4` | 关 | **方案 A**：z(384) 顶替 BERT emb 走两个 transformer 的语言槽，L_action 直达梯度到 L1；flag 存 ckpt cfg，eval/探针自动识别 |
+| `--extra-suites` | `''` | 混入额外 suite 的 train 窗口（`libero_goal`＝视觉歧义杠杆；fold/val/rollout 协议保持 spatial） |
+| `--l1-ckpt` | fold0_seed0 | L1/CHead 热启动来源 |
+| `--freeze-l1` | 关 | 冻结 L1+CHead 且 λ_C=0（两阶段姿态；冻结部分走 eval 模式，train z==rollout z） |
+| `--stream-train` | 关 | 不缓存 train 集（~25G→~8G，慢 35%）；邻居实验挤占 85 GiB cgroup 时必开 |
+| `--steps` / `--bs` / `--accum` | 25000 / 8 / 4 | 有效 batch 32；显存紧张降 bs 升 accum |
+| `--lam` | 0.5 1.0 0.1 | λ_C λ_flow λ_action |
+| `--flow-noise` | 0.01 | D10：L4 吃带噪预测 flow，不用 GT teacher forcing |
+| `--probe-every` / `--probe-tasks` | 2500 / 4 | 训练中闭环探针（2 ood + 2 train 各 5 eps 子进程 rollout；val loss 对闭环塌陷失明，探针是唯一预警） |
+| `--resume` | — | 从 ckpt 续训（含 opt state + best + LR 快进）；OOM 被杀后用 `ckpt_last.pt` |
+| `--use-cross-attn` | 关 | L3 的 z 注入换 cross-attn 变体 |
+| `--val-every` / `--log-every` / `--seed` / `--no-wandb` | 500 / 20 / 0 / 关 | 常规 |
+
+产物：`runs/<name>/{ckpt_best,ckpt_last,ckpt_final,ckpt_step<N>}.pt` + `metrics.jsonl`（train/val/probe 三类行）+ wandb（project=routedflow）。
+冒烟：`python3 run_stage2.py smoke`（8 步小跑，OOM/管线检查）；单测：`run_stage1.py test` / `run_stage2.py test` / `run_stage2.py char` / `char-env`。
+
+### 3. 全量 rollout 评测（10 任务 × vec×rounds eps，约 40min）
+
+```bash
+python3 run_stage2.py eval --run joint_zA --ckpt ckpt_step7500.pt --out-tag full7500
+```
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `--run`（必填）/ `--ckpt` | — / ckpt_best.pt | ⚠ 选 ckpt 认探针曲线峰值步，不要信 val loss（BC 过训闭环塌陷已复现 5 次） |
+| `--vec` / `--rounds` | 5 / 2 | 每任务 eps = vec×rounds |
+| `--n-video` / `--tasks-limit` / `--out-tag` / `--no-wandb` | 3 / 全部 / '' / 关 | 常规 |
+
+产物：`experiments/stage2_approach_joint/rollout_<run>_<tag>/summary.json`（train-8 / ood-2 SR）+ 每任务视频。
+当前基准：冠军 train-8 **0.2875** / ood-2 0.10（joint_fold0_seed0 旧 ckpt）；goalmix@7500 0.1375 / 0.15。
+
 ## Changelog
 
 ### 2026-07-29
@@ -188,6 +272,30 @@ Phase-Gated Flow Routing 的实现代码库。按接触时刻 $t_g$（夹爪闭�
 - 已知增益杠杆（未做）：补完 60 epochs、λ_action 日程、latch 细化、ood 差距随 C-VLM held-out
   弱项复合（stage-1 A1 ood 0.33）
 - 坑：后台命令 `; echo rc=$?` 会把任务退出码遮成 0——真实 rc 只在输出文件里
+
+### 2026-08-04（第四批）— 方案 A 代码落地 + hindsight C 标签（未开训）
+- **方案 A（z 直连 L4 语言槽）**：`ApproachPolicy(use_z=True)` 让 z (384) 顶替原 BERT
+  task_emb 走 `language_encoder_spatial/temporal`（两个 transformer 的
+  `use_language_token` 打开），L_action 获得**不经 L3 flow 的直达梯度**到 L1；raw text
+  依然不进 L4，z 仍是唯一任务通道。engine 加 `--z-to-l4`（flag 存 ckpt cfg，
+  eval_rollout/probe 自动读取并把 z 传给 act）；旧 ckpt 默认 False 完全兼容
+- **hindsight C 标签**：C 是 episode 的未来事件——contact 之前每一帧都是同一标签的合法
+  输入（监督密度 1→~K/episode，逼出「C 与臂位无关」不变性）。新增
+  `extract_hindsight_frames.py`（重放渲染，每 demo 在 [0, **首次**闭合−guard] 均匀存
+  K=8 帧 512²；首次闭合防 fumble 段近接触泄露，同 goalmix arm-motion leak 家族）+
+  `Stage1Dataset(hindsight=True)`（仅 train split 随机换帧、标签/增强/prior 不动、
+  缺帧回落 rgb0、惰性 per-worker h5 句柄）+ stage-1 engine `--hindsight` +
+  `run_stage1.py extract-hindsight`
+- 验证（未开训）：单测 stage-1 12/12、stage-2 4/4（新增 z 梯度贯通 + z 变则 action 变 +
+  hindsight 帧选择）；JointApproachModel 合成 batch 前向：z 梯度同时到达两个 language
+  encoder，legacy 路径无回归；3 任务×2 demo 抽取 smoke：帧随臂动渐变、frame0≈rgb0、
+  fallback/标签不变性/augment 叠加/val 守卫全过
+- 待启动：全量 extract-hindsight（3 suites，约 1-2h GPU 渲染）→ stage-1 重训（--hindsight）
+  → stage-2 `--z-to-l4 --freeze-l1? --extra-suites libero_goal` + 判决包（真实 z 分化
+  预期 ≫0.36% / 探针曲线 / 全量 rollout 对冠军 0.2875）
+- README 新增「训练与评测教程」章节（数据准备/stage-1/stage-2/rollout 全命令 + 参数表 +
+  当前推荐配置 + setsid 挂起规约）；TurboVLA 对照分析与备选库 T1/T2/T3 存档于
+  PIPELINE_IMPL_PLAN §5.5（触发条件 + 廉价探针，择机提醒）
 
 ### 2026-08-04（第三批）— goal 混训判决 + 实验总结 artifact
 - goalmix 25k 跑完（途中三次启动：①会话进程退出连坐后台任务——改 `setsid nohup` 脱钩；

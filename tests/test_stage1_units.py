@@ -181,6 +181,20 @@ def test_grasp_cycles_debounce_and_fumble():
     assert grasp_cycles(acts([-1] * 10)) == []
 
 
+def test_hindsight_frame_selection():
+    from routedflow.extract_hindsight_frames import hindsight_ts
+
+    ts = hindsight_ts(t_first_close=200, k=8, guard=10)
+    assert ts[0] == 0 and ts[-1] == 190          # spans [0, t_close - guard]
+    assert len(ts) == 8 and (np.diff(ts) > 0).all()
+    # short demo: bound collapses -> only frame 0 (the rgb0 case), never negative
+    assert list(hindsight_ts(t_first_close=5, k=8, guard=10)) == [0]
+    assert list(hindsight_ts(t_first_close=0, k=4, guard=10)) == [0]
+    # near-collapse: duplicates are deduped, indices stay within bound
+    ts = hindsight_ts(t_first_close=14, k=8, guard=10)
+    assert ts[-1] == 4 and len(ts) == len(set(ts.tolist()))
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:
